@@ -370,8 +370,8 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 
 		field_variable_index_left->set_field(lexp->index);
 		child_variable_index_left->set_allocated_struct_field(field_variable_index_left);
-		string type_left_str = TypeIdToString(lexp->return_type);
-		type_left->set_allocated_string(&type_left_str);
+		string* type_left_str = new string(TypeIdToString(lexp->return_type));
+		type_left->set_allocated_string(type_left_str);
 		map_key_type_left->set_allocated_map_key(type_left);
 		map_key_type_left->set_allocated_child(child_variable_index_left);
 		child_variable_type_left->set_allocated_map_key(map_key_type_left);
@@ -396,8 +396,8 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 
 		field_variable_index_right->set_field(rexp->index);
 		child_variable_index_right->set_allocated_struct_field(field_variable_index_right);
-		string type_right_str = TypeIdToString(rexp->return_type);
-		type_right->set_allocated_string(&type_right_str);
+		string* type_right_str = new string(TypeIdToString(rexp->return_type));
+		type_right->set_allocated_string(type_right_str);
 		map_key_type_right->set_allocated_map_key(type_right);
 		map_key_type_right->set_allocated_child(child_variable_index_right);
 		child_variable_type_right->set_allocated_map_key(map_key_type_right);
