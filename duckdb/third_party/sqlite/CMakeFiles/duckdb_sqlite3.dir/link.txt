@@ -1,0 +1,2 @@
+/bin/ar qc libduckdb_sqlite3.a  CMakeFiles/duckdb_sqlite3.dir/sqlite3.c.o
+/bin/ranlib libduckdb_sqlite3.a

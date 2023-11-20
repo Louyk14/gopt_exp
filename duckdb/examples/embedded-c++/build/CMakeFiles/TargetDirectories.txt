@@ -1,0 +1,3 @@
+/Users/louyk/Desktop/dbs/duckdb/examples/embedded-c++/build/CMakeFiles/example.dir
+/Users/louyk/Desktop/dbs/duckdb/examples/embedded-c++/build/CMakeFiles/edit_cache.dir
+/Users/louyk/Desktop/dbs/duckdb/examples/embedded-c++/build/CMakeFiles/rebuild_cache.dir

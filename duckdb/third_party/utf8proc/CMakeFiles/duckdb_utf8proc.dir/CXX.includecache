@@ -1,0 +1,44 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc.cpp
+utf8proc.hpp
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc.hpp
+utf8proc_data.cpp
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc_data.cpp
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc_data.cpp
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc_wrapper.cpp
+utf8proc_wrapper.hpp
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc_wrapper.hpp
+utf8proc.hpp
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/utf8proc/utf8proc.hpp
+
+third_party/utf8proc/include/utf8proc.hpp
+stdlib.h
+-
+stddef.h
+-
+stdbool.h
+-
+inttypes.h
+-
+limits.h
+-
+
+third_party/utf8proc/include/utf8proc_wrapper.hpp
+string
+-
+cassert
+-
+cstring
+-
+cstdint
+-
+

@@ -1,0 +1,22 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/fastpforlib/bitpacking.cpp
+bitpacking.h
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/fastpforlib/bitpacking.h
+cstdint
+-
+type_traits
+-
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/fastpforlib/bitpacking.h
+cinttypes
+-
+string
+-
+

@@ -1,0 +1,36 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/printf.c
+stripped_sqlite_int.h
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/stripped_sqlite_int.h
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/strglob.c
+stripped_sqlite_int.h
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/stripped_sqlite_int.h
+ctype.h
+-
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/stripped_sqlite_int.h
+stdint.h
+-
+stdarg.h
+-
+stdlib.h
+-
+string.h
+-
+math.h
+-
+duckdb_shell_wrapper.h
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/tools/sqlite3_api_wrapper/sqlite3/duckdb_shell_wrapper.h
+assert.h
+-
+
+tools/sqlite3_api_wrapper/include/duckdb_shell_wrapper.h
+

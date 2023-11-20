@@ -1,0 +1,42 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/miniz/miniz.cpp
+miniz.hpp
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/miniz/miniz.hpp
+sys/stat.h
+-
+sys/utime.h
+-
+sys/utime.h
+-
+sys/utime.h
+-
+utime.h
+-
+utime.h
+-
+utime.h
+-
+
+/home/admin/louyunkai.lyk/gopt/gopt_experiment/duckdb/third_party/miniz/miniz.hpp
+stddef.h
+-
+time.h
+-
+assert.h
+-
+stdint.h
+-
+stdlib.h
+-
+string.h
+-
+stdio.h
+-
+
