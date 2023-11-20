@@ -88,8 +88,7 @@ substrait::AggregateFunction* BoundFunctionExpression::ToAggregateFunction() con
 
     for (int j = 0; j < children.size(); ++j) {
         substrait::FunctionArgument* child = new substrait::FunctionArgument();
-        substrait::AggregateFunction* func = new substrait::AggregateFunction();
-        func = children[j].get()->ToAggregateFunction();
+        substrait::AggregateFunction* func = children[j].get()->ToAggregateFunction();
         child->set_allocated_function(func);
         *aggregate_function->add_childs() = *child;
         delete child;

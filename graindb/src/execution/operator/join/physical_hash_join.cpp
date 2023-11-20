@@ -381,6 +381,7 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 		direct_reference_left->set_allocated_map_key(map_key_variable_left);
 		field_reference_left->set_allocated_direct_reference(direct_reference_left);
 		*hash_join->add_left_keys() = *field_reference_left;
+        delete field_reference_left;
 		// hash_join->mutable_left_keys()->AddAllocated(field_reference_left);
 
 		substrait::Expression_FieldReference* field_reference_right = new substrait::Expression_FieldReference();
@@ -406,6 +407,7 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 		direct_reference_right->set_allocated_map_key(map_key_variable_right);
 		field_reference_right->set_allocated_direct_reference(direct_reference_right);
 		*hash_join->add_right_keys() = *field_reference_right;
+        delete field_reference_right;
 		// hash_join->mutable_right_keys()->AddAllocated(field_reference_right);
 	}
 
