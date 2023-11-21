@@ -4,6 +4,7 @@ graindb/cmake-build-release/
 duckdb/cmake-build-debug/
 duckdb/cmake-build-release/
 .ossutil_checkpoint/
+graindb/examples/programmatic-querying/main_pb_full.cpp
 
 *.cmake
 **/CMakeFiles/

@@ -595,8 +595,7 @@ unique_ptr<PhysicalSIPJoin> PbSerializer::GeneratePhysicalSIPJoin(duckdb::Client
 	}
 
 	LogicalComparisonJoin join_op(JoinType::INNER);
-	if (sip_join_rel.type() == substrait::SIPJoinRel_JoinType_JOIN_TYPE_INNER)
-		join_op.join_type = JoinType::INNER;
+    join_op.join_type = SubstraitSIPJoinTypeToJoinType(sip_join_rel.type());
 
 	vector<TypeId> output_types;
 	for (int i = 0; i < sip_join_rel.out_types_size(); ++i)
@@ -686,8 +685,7 @@ unique_ptr<PhysicalMergeSIPJoin> PbSerializer::GeneratePhysicalMergeSIPJoin(duck
 	}
 
 	LogicalComparisonJoin join_op(JoinType::INNER);
-	if (merge_sip_join_rel.type() == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_INNER)
-		join_op.join_type = JoinType::INNER;
+    join_op.join_type = SubstraitMergeSIPJoinTypeToJoinType(merge_sip_join_rel.type());
 
 	vector<TypeId> output_types;
 	for (int i = 0; i < merge_sip_join_rel.out_types_size(); ++i)

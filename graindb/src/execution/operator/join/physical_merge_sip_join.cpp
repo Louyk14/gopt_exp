@@ -431,8 +431,7 @@ substrait::Rel* PhysicalMergeSIPJoin::ToSubstraitClass(unordered_map<int, string
 	common->set_allocated_emit(emit);
 	merge_sip_join->set_allocated_common(common);
 
-	if (this->type == JoinType::INNER)
-		merge_sip_join->set_type(substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_INNER);
+    merge_sip_join->set_type(JoinTypeToSubstraitMergeSIPJoinType(type));
 
 	for (int i = 0; i < conditions.size(); ++i) {
 		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();

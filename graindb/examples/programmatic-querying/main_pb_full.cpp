@@ -678,7 +678,7 @@ int main() {
         con.context->transaction.SetAutoCommit(false);
         con.context->transaction.BeginTransaction();
         // std::cout << i << std::endl;
-        con.context->SetPbParameters(2, "../../../output/sf1/duckdb/query" + to_string(i) + ".log");
+        con.context->SetPbParameters(0, "../../../output/sf1/duckdb/query" + to_string(i) + ".log");
         /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
                             "    where pu_personid = 6597069767674 and pu_organisationid = o2.o_organisationid and o2.o_placeid =p2.pl_placeid\n"

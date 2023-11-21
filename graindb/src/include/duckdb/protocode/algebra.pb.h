@@ -773,12 +773,14 @@ enum SIPJoinRel_JoinType : int {
   SIPJoinRel_JoinType_JOIN_TYPE_RIGHT_SEMI = 6,
   SIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI = 7,
   SIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI = 8,
+  SIPJoinRel_JoinType_JOIN_TYPE_SINGLE = 9,
+  SIPJoinRel_JoinType_JOIN_TYPE_MARK = 10,
   SIPJoinRel_JoinType_SIPJoinRel_JoinType_INT_MIN_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::min(),
   SIPJoinRel_JoinType_SIPJoinRel_JoinType_INT_MAX_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::max()
 };
 bool SIPJoinRel_JoinType_IsValid(int value);
 constexpr SIPJoinRel_JoinType SIPJoinRel_JoinType_JoinType_MIN = SIPJoinRel_JoinType_JOIN_TYPE_UNSPECIFIED;
-constexpr SIPJoinRel_JoinType SIPJoinRel_JoinType_JoinType_MAX = SIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI;
+constexpr SIPJoinRel_JoinType SIPJoinRel_JoinType_JoinType_MAX = SIPJoinRel_JoinType_JOIN_TYPE_MARK;
 constexpr int SIPJoinRel_JoinType_JoinType_ARRAYSIZE = SIPJoinRel_JoinType_JoinType_MAX + 1;
 
 const ::PROTOBUF_NAMESPACE_ID::EnumDescriptor* SIPJoinRel_JoinType_descriptor();
@@ -805,12 +807,14 @@ enum MergeSIPJoinRel_JoinType : int {
   MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT_SEMI = 6,
   MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI = 7,
   MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI = 8,
+  MergeSIPJoinRel_JoinType_JOIN_TYPE_SINGLE = 9,
+  MergeSIPJoinRel_JoinType_JOIN_TYPE_MARK = 10,
   MergeSIPJoinRel_JoinType_MergeSIPJoinRel_JoinType_INT_MIN_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::min(),
   MergeSIPJoinRel_JoinType_MergeSIPJoinRel_JoinType_INT_MAX_SENTINEL_DO_NOT_USE_ = std::numeric_limits<int32_t>::max()
 };
 bool MergeSIPJoinRel_JoinType_IsValid(int value);
 constexpr MergeSIPJoinRel_JoinType MergeSIPJoinRel_JoinType_JoinType_MIN = MergeSIPJoinRel_JoinType_JOIN_TYPE_UNSPECIFIED;
-constexpr MergeSIPJoinRel_JoinType MergeSIPJoinRel_JoinType_JoinType_MAX = MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI;
+constexpr MergeSIPJoinRel_JoinType MergeSIPJoinRel_JoinType_JoinType_MAX = MergeSIPJoinRel_JoinType_JOIN_TYPE_MARK;
 constexpr int MergeSIPJoinRel_JoinType_JoinType_ARRAYSIZE = MergeSIPJoinRel_JoinType_JoinType_MAX + 1;
 
 const ::PROTOBUF_NAMESPACE_ID::EnumDescriptor* MergeSIPJoinRel_JoinType_descriptor();
@@ -12238,6 +12242,10 @@ class SIPJoinRel final :
     SIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI;
   static constexpr JoinType JOIN_TYPE_RIGHT_ANTI =
     SIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI;
+  static constexpr JoinType JOIN_TYPE_SINGLE =
+    SIPJoinRel_JoinType_JOIN_TYPE_SINGLE;
+  static constexpr JoinType JOIN_TYPE_MARK =
+    SIPJoinRel_JoinType_JOIN_TYPE_MARK;
   static inline bool JoinType_IsValid(int value) {
     return SIPJoinRel_JoinType_IsValid(value);
   }
@@ -12728,6 +12736,10 @@ class MergeSIPJoinRel final :
     MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI;
   static constexpr JoinType JOIN_TYPE_RIGHT_ANTI =
     MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT_ANTI;
+  static constexpr JoinType JOIN_TYPE_SINGLE =
+    MergeSIPJoinRel_JoinType_JOIN_TYPE_SINGLE;
+  static constexpr JoinType JOIN_TYPE_MARK =
+    MergeSIPJoinRel_JoinType_JOIN_TYPE_MARK;
   static inline bool JoinType_IsValid(int value) {
     return MergeSIPJoinRel_JoinType_IsValid(value);
   }
