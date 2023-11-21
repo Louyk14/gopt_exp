@@ -323,6 +323,7 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
     buffer << query_file.rdbuf();
     string query_template(buffer.str());
     replace_all(query_template, "\n", " ");
+    vector<string> tokenizers;
 
     while (std::getline(para_file, data)) {
         int pos = 0;
@@ -333,8 +334,14 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
         string query_template_tmp(query_template);
         while ((pos = data.find(delimiter, last)) != std::string::npos) {
             string token = data.substr(last, pos - last);
+            tokenizers.push_back(token);
             if (data_types[indexer] == "VARCHAR")
                 token = "\'" + token + "\'";
+            if (slots[indexer] == ":durationDays") {
+                long long dur = atoi(token.c_str());
+                long long end_time = atoll(tokenizers[indexer - 1].c_str()) + dur;
+                token = to_string(end_time);
+            }
             replace_all(query_template_tmp, slots[indexer], token);
             indexer += 1;
             last = pos + 1;
@@ -658,15 +665,18 @@ int main() {
     // getStringListFromFile("../../../../dataset/ldbc/sf1/person_0_0.csv", 0, count_num, constantval_list);
     // constantval_list.push_back("4398046511870");
 
+    string query_index = "1";
     vector<string> generated_queries;
-    //string query_path = "../../../../dataset/ldbc/query/queries/interactive-complex-1.sql";
-    //string para_path = "../../../../dataset/ldbc/query/paras/ic1.param";
-    //generate_queries(query_path, para_path, generated_queries);
+    string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index + ".sql";
+    string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/sf01/interactive_" + query_index + "_param.txt";
+    generate_queries(query_path, para_path, generated_queries);
 
     std::cout << "Generate Queries Over" << std::endl;
 
-    string schema_path = "../../../resource/schema.sql";
-    string load_path = "../../../resource/load.sql";
+    //string schema_path = "../../../resource/schema.sql";
+    //string load_path = "../../../resource/load.sql";
+    string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
+    string load_path = "../../../../dataset/ldbc-merge/load.sql";
 
     DuckDB db(nullptr);
     Connection con(db);
@@ -674,18 +684,24 @@ int main() {
 
     CreateGraphFromSQL(con, schema_path, load_path);
 
-    for (int i = 0; i < 1; ++i) {//generated_queries.size(); ++i) {
+    /*std::fstream outfile("output.txt", std::ios::out);
+    for (int i = 0; i < generated_queries.size(); ++i)
+        outfile << generated_queries[i] << std::endl << std::endl;
+    outfile.close();*/
+
+    for (int i = 0; i < generated_queries.size(); ++i) {
         con.context->transaction.SetAutoCommit(false);
         con.context->transaction.BeginTransaction();
         // std::cout << i << std::endl;
-        con.context->SetPbParameters(2, "../../../output/sf1/duckdb/query" + to_string(i) + ".log");
+        con.context->SetPbParameters(2, "../../../../output/sf01/graindb/query" + to_string(i) + ".log");
         /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
                             "    where pu_personid = 6597069767674 and pu_organisationid = o2.o_organisationid and o2.o_placeid =p2.pl_placeid\n"
                             "    group by pu_personid");
         r1->Print();
         break;*/
-        auto result = con.Query(get_test_query(12));
+        auto result = con.Query(generated_queries[i]);
+        // auto result = con.Query(get_test_query(12));
 
         //con.QueryPb(generated_queries[i]);
         /*con.QueryPb("SELECT f.title FROM "

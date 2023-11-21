@@ -14,7 +14,9 @@ duckdb/cmake-build-release/
 graindb/third_party/sqllogictest
 graindb/third_party/
 graindb/test/
-
+graindb/tools/
+graindb/duckdb_cli
+graindb/benchmark/
 
 **/ub_*
 *.a
