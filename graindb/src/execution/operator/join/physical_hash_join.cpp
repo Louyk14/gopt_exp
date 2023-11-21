@@ -375,7 +375,8 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 		map_key_type_left->set_allocated_map_key(type_left);
 		map_key_type_left->set_allocated_child(child_variable_index_left);
 		child_variable_type_left->set_allocated_map_key(map_key_type_left);
-		variable_name_left->set_allocated_string(&lexp->alias);
+        string* alias_left_string = new string(lexp->alias);
+		variable_name_left->set_allocated_string(alias_left_string);
 		map_key_variable_left->set_allocated_map_key(variable_name_left);
 		map_key_variable_left->set_allocated_child(child_variable_type_left);
 		direct_reference_left->set_allocated_map_key(map_key_variable_left);
@@ -401,7 +402,8 @@ substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& t
 		map_key_type_right->set_allocated_map_key(type_right);
 		map_key_type_right->set_allocated_child(child_variable_index_right);
 		child_variable_type_right->set_allocated_map_key(map_key_type_right);
-		variable_name_right->set_allocated_string(&rexp->alias);
+        string* alias_right_string = new string(rexp->alias);
+		variable_name_right->set_allocated_string(alias_right_string);
 		map_key_variable_right->set_allocated_map_key(variable_name_right);
 		map_key_variable_right->set_allocated_child(child_variable_type_right);
 		direct_reference_right->set_allocated_map_key(map_key_variable_right);
