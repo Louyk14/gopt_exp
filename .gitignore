@@ -9,11 +9,18 @@ duckdb/cmake-build-release/
 **/CMakeFiles/
 *.a
 *.so
+*.tmp
+*.tcl
 graindb/third_party/sqllogictest
+graindb/third_party/
+graindb/test/
 
+
+**/ub_*
 *.a
 *.o
 *.so
 *.cmake
 **/CMakeFiles/
 **/CMakeCache.txt
+**/Makefile
