@@ -10,11 +10,21 @@ graindb/examples/programmatic-querying/main_pb_full.cpp
 **/CMakeFiles/
 *.a
 *.so
+*.tmp
+*.tcl
+graindb/examples/programmatic-querying/main_pb_full.cpp
 graindb/third_party/sqllogictest
+graindb/third_party/
+graindb/test/
+graindb/tools/
+graindb/duckdb_cli
+graindb/benchmark/
 
+**/ub_*
 *.a
 *.o
 *.so
 *.cmake
 **/CMakeFiles/
 **/CMakeCache.txt
+**/Makefile
