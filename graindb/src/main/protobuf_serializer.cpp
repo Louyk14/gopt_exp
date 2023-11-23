@@ -769,14 +769,14 @@ unique_ptr<PhysicalDelimJoin> PbSerializer::GeneratePhysicalDelimJoin(duckdb::Cl
     for (int i = 0; i < delim_join_rel.out_types_size(); ++i) {
         out_types.push_back(TypeIdFromString(delim_join_rel.out_types(i)));
     }
-    LogicalComparisonJoin* op = new LogicalComparisonJoin(JoinType::INNER);
-    op->types = out_types;
+    LogicalComparisonJoin op(JoinType::INNER);
+    op.types = out_types;
 
     join_operator->children[0] = move(input_operator);
 
     vector<PhysicalOperator*> delim_scans;
     GetDelimScans(join_operator->children[1].get(), delim_scans);
-    unique_ptr<PhysicalDelimJoin> delim_join_operator = make_unique<PhysicalDelimJoin>(*op, move(join_operator),
+    unique_ptr<PhysicalDelimJoin> delim_join_operator = make_unique<PhysicalDelimJoin>(op, move(join_operator),
             move(delim_scans));
 
     PhysicalChunkScan* chunk_scan = (PhysicalChunkScan*) distinct_operator->children[0]->children[0].get();

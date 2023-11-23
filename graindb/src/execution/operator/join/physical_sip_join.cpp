@@ -404,7 +404,7 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 	common->set_allocated_emit(emit);
 	sip_join->set_allocated_common(common);
 
-    sip_join->set_type(JoinTypeToSubstraitSIPJoinType(type));
+	sip_join->set_type(JoinTypeToSubstraitSIPJoinType(type));	
 
 	for (int i = 0; i < conditions.size(); ++i) {
 		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();

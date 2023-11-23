@@ -12,6 +12,7 @@ graindb/examples/programmatic-querying/main_pb_full.cpp
 *.so
 *.tmp
 *.tcl
+graindb/examples/embedded-c++/results/
 graindb/examples/programmatic-querying/main_pb_full.cpp
 graindb/third_party/sqllogictest
 graindb/third_party/
