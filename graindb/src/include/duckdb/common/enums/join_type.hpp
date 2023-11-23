@@ -34,4 +34,10 @@ string JoinTypeToString(JoinType type);
 substrait::HashJoinRel_JoinType JoinTypeToSubstraitHashJoinType(JoinType type);
 JoinType SubstraitHashJoinTypeToJoinType(substrait::HashJoinRel_JoinType type);
 
+substrait::SIPJoinRel_JoinType JoinTypeToSubstraitSIPJoinType(JoinType type);
+JoinType SubstraitSIPJoinTypeToJoinType(substrait::SIPJoinRel_JoinType type);
+
+substrait::MergeSIPJoinRel_JoinType JoinTypeToSubstraitMergeSIPJoinType(JoinType type);
+JoinType SubstraitMergeSIPJoinTypeToJoinType(substrait::MergeSIPJoinRel_JoinType type);
+
 } // namespace duckdb

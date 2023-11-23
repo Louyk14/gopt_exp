@@ -262,6 +262,24 @@ unique_ptr<QueryResult> ClientContext::ExecutePreparedStatementFromPb(std::strin
 	    std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
 
 	std::cout << "Execution Time Cost: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+	string file_name = "";
+        int str_index = 0;
+        for (; str_index < pb_file.size(); ++str_index) {
+            if (pb_file[str_index] == '.' || pb_file[str_index] == '/')
+                continue;
+            else
+                break;
+        }
+        for (; str_index < pb_file.size(); ++str_index) {
+            if (pb_file[str_index] == '.')
+                break;
+            else
+                file_name += pb_file[str_index];
+        }
+        
+        std::fstream time_file("results/" + file_name + ".log", std::ios::app);
+        time_file << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
+        time_file.close();
 
 	profiler.EndPhase();
 
