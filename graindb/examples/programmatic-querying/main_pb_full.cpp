@@ -689,7 +689,7 @@ int main(int argc, char** args) {
     // create_db_conn(db, con);
 
     CreateGraphFromSQL(con, schema_path, load_path);
-    create_db_conn(db, con);
+    // create_db_conn(db, con);
 
     string suffix_str = "";
     if (suffix != "-1")
@@ -736,7 +736,7 @@ int main(int argc, char** args) {
                         + constantval_list[i] + "\'");
             */
             //con.context->transaction.Commit();
-            // result->Print();
+            //result->Print();
         }
     }
 }

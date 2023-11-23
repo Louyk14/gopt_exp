@@ -277,7 +277,7 @@ unique_ptr<QueryResult> ClientContext::ExecutePreparedStatementFromPb(std::strin
                 file_name += pb_file[str_index];
         }
         
-        std::fstream time_file("results/" + file_name + ".log", std::ios::app);
+        std::fstream time_file("results/" + file_name + "_test.log", std::ios::app);
         time_file << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
         time_file.close();
 

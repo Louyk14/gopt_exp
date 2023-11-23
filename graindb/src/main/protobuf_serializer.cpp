@@ -564,7 +564,8 @@ unique_ptr<PhysicalSIPJoin> PbSerializer::GeneratePhysicalSIPJoin(duckdb::Client
 			rai_info->rai = table_entry[table_name]->storage->info->rais[0].get();
 			rai_info->rai_type = rai_info->StringToRAIType(sip_join_rel.rai_type());
 			rai_info->forward = sip_join_rel.rai_forward();
-			rai_info->vertex = table_entry[sip_join_rel.rai_vertex()];
+			if (rai_info->rai_type != RAIType::SELF)
+				rai_info->vertex = table_entry[sip_join_rel.rai_vertex()];
 			rai_info->vertex_id = table_index[sip_join_rel.rai_vertex()];
 
 			for (int j = 0; j < 2; ++j) {
