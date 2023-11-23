@@ -643,7 +643,7 @@ string get_test_query(int index) {
 
 int main(int argc, char** args) {
     int count_num = 50;
-    int mode = 1;//atoi(args[1]);
+    int mode = 0;//atoi(args[1]);
     int start_query_index = 11;//atoi(args[2]);
     int end_query_index = 12;//atoi(args[3]);
     //string dataset(args[4]);
@@ -699,7 +699,7 @@ int main(int argc, char** args) {
             con.context->transaction.SetAutoCommit(false);
             con.context->transaction.BeginTransaction();
             // std::cout << i << std::endl;
-            con.context->SetPbParameters(mode, "");
+            con.context->SetPbParameters(mode, "./output.log");
             // con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
             /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
@@ -719,7 +719,7 @@ int main(int argc, char** args) {
                         + constantval_list[i] + "\'");
             */
             //con.context->transaction.Commit();
-            // result->Print();
+            result->Print();
         }
     }
 }

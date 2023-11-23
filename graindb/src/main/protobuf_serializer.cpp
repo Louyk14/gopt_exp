@@ -170,7 +170,10 @@ unique_ptr<PhysicalOperator> PbSerializer::DispatchTask(ClientContext& context, 
 	}
 	else if (cur.has_read()) {
         if (cur.read().has_named_table())
-		    return GeneratePhysicalTableScan(context, cur.read(), table_entry, table_index, index);
+            if (cur.read().has_filter() && cur.read().filter().has_nested())
+		        return GeneratePhysicalTableScan(context, cur.read(), table_entry, table_index, index);
+            else
+                return GeneratePhysicalIndexScan(context, cur.read(), table_entry, table_index, index);
 	    else
             return GeneratePhysicalChunkScan(context, cur.read(), table_entry, table_index, index);
     }
@@ -234,6 +237,7 @@ unique_ptr<PhysicalTableScan> PbSerializer::get_scan_function(ClientContext& con
 
 	return scan_function;
 }
+
 
 unique_ptr<Expression> getTrueFalseExpression(const substrait::Expression true_expr) {
     unique_ptr<Expression> res_if_true;
@@ -510,6 +514,74 @@ unique_ptr<PhysicalTableScan> PbSerializer::GeneratePhysicalTableScan(ClientCont
 }
 
 
+unique_ptr<PhysicalIndexScan> PbSerializer::GeneratePhysicalIndexScan(ClientContext& context, const substrait::ReadRel& read_rel, unordered_map<std::string, duckdb::TableCatalogEntry *> &table_entry,
+                                                                      unordered_map<std::string, int> &table_index, int& index) {
+    // std::cout << "scan " << index << std::endl;
+    const substrait::RelCommon common = read_rel.common();
+    const substrait::ReadRel_NamedTable named_table = read_rel.named_table();
+
+    vector<idx_t> get_ids;
+    vector<TypeId> get_types;
+
+    string table_name = named_table.names(0);
+    if (table_index.find(table_name) == table_index.end()) {
+        add_table_entry(context, table_name, table_entry, table_index, index);
+    }
+
+    int table_id = table_index[table_name];
+
+    const substrait::RelCommon_Emit emit = common.emit();
+    for (int i = 0; i < emit.output_mapping_size(); ++i) {
+        get_ids.push_back(emit.output_mapping(i));
+        get_types.push_back(TypeIdFromString(emit.output_types(i)));
+    }
+
+    auto table_or_view =
+            Catalog::GetCatalog(context).GetEntry(context, CatalogType::TABLE, "", table_name);
+
+    auto table = (TableCatalogEntry *)table_or_view;
+    auto logical_get = make_unique<LogicalGet>(move(table), table_id, move(get_ids));
+    logical_get->types = get_types;
+
+    int index_column_id = atoi(named_table.names(1).c_str());
+
+    for (size_t j = 0; j < table->storage->info->indexes.size(); j++) {
+        if (table->storage->info->indexes[j]->column_ids[0] == index_column_id) {
+            unique_ptr<PhysicalIndexScan> index_scan_function
+                    = make_unique<PhysicalIndexScan>(*logical_get, *table, *table->storage.get(), *table->storage->info->indexes[j],
+                                                     logical_get->column_ids, table_id);
+
+            int exp_type_index = 0;
+            if (emit.output_names(0) == "LOW") {
+                index_scan_function->low_index = true;
+                string v = emit.output_names(1);
+                index_scan_function->low_value = getValueFromString(v, TypeIdFromString(emit.output_exp_type(0)));
+                index_scan_function->low_expression_type = static_cast<ExpressionType>(emit.output_order(exp_type_index++));
+            }
+            else {
+                index_scan_function->low_index = false;
+            }
+            if (emit.output_names(2) == "HIGH") {
+                index_scan_function->high_index = true;
+                string v = emit.output_names(3);
+                index_scan_function->high_value = getValueFromString(v, TypeIdFromString(emit.output_exp_type(1)));
+                index_scan_function->high_expression_type = static_cast<ExpressionType>(emit.output_order(exp_type_index++));
+            }
+            else {
+                index_scan_function->high_value = false;
+            }
+            if (emit.output_names(4) == "EQUAL") {
+                index_scan_function->equal_index = true;
+                string v = emit.output_names(5);
+                index_scan_function->equal_value = getValueFromString(v, TypeIdFromString(emit.output_exp_type(2)));
+            }
+
+            return index_scan_function;
+        }
+    }
+}
+
+
 unique_ptr<PhysicalChunkScan> PbSerializer::GeneratePhysicalChunkScan(ClientContext& context, const substrait::ReadRel& read_rel, unordered_map<std::string, duckdb::TableCatalogEntry *> &table_entry,
                                                                       unordered_map<std::string, int> &table_index, int& index) {
     const substrait::RelCommon common = read_rel.common();
@@ -564,8 +636,10 @@ unique_ptr<PhysicalSIPJoin> PbSerializer::GeneratePhysicalSIPJoin(duckdb::Client
 			rai_info->rai = table_entry[table_name]->storage->info->rais[0].get();
 			rai_info->rai_type = rai_info->StringToRAIType(sip_join_rel.rai_type());
 			rai_info->forward = sip_join_rel.rai_forward();
-			rai_info->vertex = table_entry[sip_join_rel.rai_vertex()];
-			rai_info->vertex_id = table_index[sip_join_rel.rai_vertex()];
+            if (rai_info->rai_type != RAIType::SELF) {
+                rai_info->vertex = table_entry[sip_join_rel.rai_vertex()];
+                rai_info->vertex_id = table_index[sip_join_rel.rai_vertex()];
+            }
 
 			for (int j = 0; j < 2; ++j) {
 				string passing_table_name = sip_join_rel.rai_passing_tables(j);

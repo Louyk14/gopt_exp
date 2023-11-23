@@ -53,6 +53,7 @@ public:
 	                      DataChunk *rai_chunk = nullptr) override;
 	string ExtraRenderInformation() const override;
 	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
+    substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const override;
 };
 
 } // namespace duckdb

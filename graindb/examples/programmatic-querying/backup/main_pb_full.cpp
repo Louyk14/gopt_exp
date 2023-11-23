@@ -262,8 +262,6 @@ unique_ptr<PhysicalTableScan> get_scan_function(ClientContext& context, string& 
 }
 
 
-
-
 void create_db_conn(DuckDB& db, Connection& con) {
     con.DisableProfiling();
     con.context->transaction.SetAutoCommit(false);

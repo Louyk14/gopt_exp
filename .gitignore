@@ -4,7 +4,7 @@ graindb/cmake-build-release/
 duckdb/cmake-build-debug/
 duckdb/cmake-build-release/
 .ossutil_checkpoint/
-graindb/examples/programmatic-querying/main_pb_full.cpp
+graindb/examples/programmatic-querying/
 **/main_pb_full.cpp
 
 *.log
@@ -16,7 +16,6 @@ graindb/examples/programmatic-querying/main_pb_full.cpp
 *.tcl
 *.DS_Store
 graindb/examples/embedded-c++/results/
-graindb/examples/programmatic-querying/main_pb_full.cpp
 graindb/third_party/sqllogictest
 graindb/third_party/
 graindb/test/

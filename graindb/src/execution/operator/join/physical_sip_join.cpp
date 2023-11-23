@@ -475,7 +475,8 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 			sip_join->set_rai_name(conditions[i].rais[0]->rai->name);
 			sip_join->set_rai_type(conditions[i].rais[0]->RAITypeToString());
 			sip_join->set_rai_forward(conditions[i].rais[0]->forward);
-			sip_join->set_rai_vertex(conditions[i].rais[0]->vertex->name);
+            if (conditions[i].rais[0]->RAITypeToString() != "SELF")
+			    sip_join->set_rai_vertex(conditions[i].rais[0]->vertex->name);
 
 			if (conditions[i].rais[0]->passing_tables[0] != 0)
 				sip_join->add_rai_passing_tables(tableid2name[conditions[i].rais[0]->passing_tables[0]]);
