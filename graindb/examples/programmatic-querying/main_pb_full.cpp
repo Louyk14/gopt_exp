@@ -153,8 +153,9 @@ void CreateGraphFromSQL(Connection& con, string schema_path="", string load_path
     std::ifstream constraint_file(constraint_path, std::ios::in);
     if (constraint_file) {
         std::stringstream buffer_constraint;
-        buffer_constraint << load_file.rdbuf();
+        buffer_constraint << constraint_file.rdbuf();
         string constraint_sql(buffer_constraint.str());
+        replace_all(constraint_sql, "\n", "");
         con.Query(constraint_sql);
     }
     constraint_file.close();
@@ -354,30 +355,10 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
 
 string get_test_query(int index) {
     if (index == 0) {
-        return "with recursive extended_tags as (\n"
-               "    select s_subtagclassid, s_supertagclassid from tagclass_recursive\n"
-               "    UNION\n"
-               "    select tc.tc_tagclassid, t.s_supertagclassid from tagclass tc, extended_tags t\n"
-               "        where tc.tc_subclassoftagclassid=t.s_subtagclassid\n"
-               ")\n"
-               "select p_personid, p_firstname, p_lastname, string_agg(distinct t_name, ';'), count(*) AS replyCount\n"
-               "from person, message p1, knows, message p2, message_tag, \n"
-               "    (select distinct t_tagid, t_name from tag where (t_tagclassid in (\n"
-               "          select distinct s_subtagclassid from extended_tags k, tagclass\n"
-               "        where tc_tagclassid = k.s_supertagclassid and tc_name = 'Criminal') \n"
-               "   )) selected_tags\n"
-               "where\n"
-               "  k_person1id = 6597069767679 and \n"
-               "  k_person2id = p_personid and \n"
-               "  p_personid = p1.m_creatorid and \n"
-               "  p1.m_c_replyof = p2.m_messageid and \n"
-               "  p2.m_c_replyof is null and\n"
-               "  p2.m_messageid = mt_messageid and \n"
-               "  mt_tagid = t_tagid\n"
-               "group by p_personid, p_firstname, p_lastname\n"
-               "order by replyCount desc, p_personid\n"
-               "limit 20\n"
-               ";";
+        return "select k2.k_person2id\n"
+               "   from Knows k1, Knows k2\n"
+               "   where\n"
+               "   k1.k_person1id = 1 and k1.k_person2id = k2.k_person1id and k2.k_person2id <> 1;";
     }
     else if (index == 1) {
         return "select\n"
@@ -662,11 +643,11 @@ string get_test_query(int index) {
 
 int main(int argc, char** args) {
     int count_num = 50;
-    int mode = atoi(args[1]);
-    int start_query_index = atoi(args[2]);
-    int end_query_index = atoi(args[3]);
-    string dataset(args[4]);
-    string suffix(args[5]);
+    int mode = 1;//atoi(args[1]);
+    int start_query_index = 11;//atoi(args[2]);
+    int end_query_index = 12;//atoi(args[3]);
+    //string dataset(args[4]);
+    //string suffix(args[5]);
     // vector<string> constantval_list;
     // getStringListFromFile("../../../../dataset/ldbc/sf1/person_0_0.csv", 0, count_num, constantval_list);
     // constantval_list.push_back("4398046511870");
@@ -679,21 +660,22 @@ int main(int argc, char** args) {
 
     // std::cout << "Generate Queries Over" << std::endl;
 
-    //string schema_path = "../../../resource/schema.sql";
-    //string load_path = "../../../resource/load.sql";
-    string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
-    string load_path = "../../../../dataset/ldbc-merge/load.sql";
+    string schema_path = "../../../resource/schema.sql";
+    string load_path = "../../../resource/load.sql";
+    string constraint_path = "../../../resource/constraints.sql";
+    // string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
+    // string load_path = "../../../../dataset/ldbc-merge/load.sql";
 
     DuckDB db(nullptr);
     Connection con(db);
     // create_db_conn(db, con);
 
-    CreateGraphFromSQL(con, schema_path, load_path);
+    CreateGraphFromSQL(con, schema_path, load_path, constraint_path);
     create_db_conn(db, con);
 
     string suffix_str = "";
-    if (suffix != "-1")
-        suffix_str += "_" + suffix;
+    //if (suffix != "-1")
+    //    suffix_str += "_" + suffix;
 
     /*std::fstream outfile("output.txt", std::ios::out);
     for (int i = 0; i < generated_queries.size(); ++i)
@@ -704,20 +686,21 @@ int main(int argc, char** args) {
             continue;
         string query_index_str = to_string(query_index);
         vector<string> generated_queries;
-        string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index_str + ".sql";
-        string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/" + dataset + "/interactive_" + query_index_str + "_param.txt";
-        generate_queries(query_path, para_path, generated_queries);
+        //string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index_str + ".sql";
+        //string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/" + dataset + "/interactive_" + query_index_str + "_param.txt";
+        //generate_queries(query_path, para_path, generated_queries);
         
     /*std::fstream outfile("output.txt", std::ios::out);
     for (int i = 0; i < generated_queries.size(); ++i)
         outfile << generated_queries[i] << std::endl << std::endl;
     outfile.close();
 */
-        for (int i = 0; i < generated_queries.size(); ++i) {
+        for (int i = 0; i < 1; ++i) {//generated_queries.size(); ++i) {
             con.context->transaction.SetAutoCommit(false);
             con.context->transaction.BeginTransaction();
             // std::cout << i << std::endl;
-            con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
+            con.context->SetPbParameters(mode, "");
+            // con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
             /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
                             "    where pu_personid = 6597069767674 and pu_organisationid = o2.o_organisationid and o2.o_placeid =p2.pl_placeid\n"
@@ -725,8 +708,8 @@ int main(int argc, char** args) {
             r1->Print();
             break;*/
             // auto result = con.Query("select count(*) from organisation limit 20;");
-            auto result = con.Query(generated_queries[i]);
-            // auto result = con.Query(get_test_query(12));
+            // auto result = con.Query(generated_queries[i]);
+            auto result = con.Query(get_test_query(1));
 
             //con.QueryPb(generated_queries[i]);
             /*con.QueryPb("SELECT f.title FROM "
