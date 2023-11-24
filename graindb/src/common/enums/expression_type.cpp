@@ -148,6 +148,8 @@ ExpressionType ExpressionTypeFromString(string type) {
         return ExpressionType::BOUND_REF;
     else if (type == "CAST")
         return ExpressionType::OPERATOR_CAST;
+    else if (type == "COMPARE_BETWEEN")
+        return ExpressionType::COMPARE_BETWEEN;
 }
 
 string ExpressionTypeToOperator(ExpressionType type) {

@@ -6,6 +6,7 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_between_expression.hpp"
 
 using namespace duckdb;
 using namespace std;
@@ -74,63 +75,67 @@ substrait::Expression* formulateExpression(Expression* expr) {
     if (expr->type == ExpressionType::BOUND_REF) {
         BoundReferenceExpression* lexp = (BoundReferenceExpression*) expr;
 
-        substrait::Expression_FieldReference* field_reference = new substrait::Expression_FieldReference();
-        substrait::Expression_ReferenceSegment* direct_reference = new substrait::Expression_ReferenceSegment();
-        substrait::Expression_ReferenceSegment_MapKey* map_key_variable = new substrait::Expression_ReferenceSegment_MapKey();
-        substrait::Expression_Literal* variable_name = new substrait::Expression_Literal();
-        substrait::Expression_ReferenceSegment* child_variable_type = new substrait::Expression_ReferenceSegment();
-        substrait::Expression_ReferenceSegment_MapKey* map_key_type = new substrait::Expression_ReferenceSegment_MapKey();
-        substrait::Expression_Literal* type_left = new substrait::Expression_Literal();
-        substrait::Expression_ReferenceSegment* child_variable_index = new substrait::Expression_ReferenceSegment();
-        substrait::Expression_ReferenceSegment_StructField* field_variable_index = new substrait::Expression_ReferenceSegment_StructField();
+        substrait::Expression_Literal* literal = new substrait::Expression_Literal();
+        result_expression->set_allocated_literal(literal);
+        substrait::Expression_Literal_List* list = new substrait::Expression_Literal_List();
+        literal->set_allocated_list(list);
 
-        field_variable_index->set_field(lexp->index);
-        child_variable_index->set_allocated_struct_field(field_variable_index);
-        string* type_left_str = new string(TypeIdToString(lexp->return_type));
-        type_left->set_allocated_string(type_left_str);
-        map_key_type->set_allocated_map_key(type_left);
-        map_key_type->set_allocated_child(child_variable_index);
-        child_variable_type->set_allocated_map_key(map_key_type);
+        substrait::Expression_Literal* expr_type = new substrait::Expression_Literal();
+        expr_type->set_i64(static_cast<int>(expr->type));
+        *list->add_values() = *expr_type;
+        delete expr_type;
+
+        substrait::Expression_Literal* alias = new substrait::Expression_Literal();
         string* alias_str = new string(lexp->alias);
-        variable_name->set_allocated_string(alias_str);
-        map_key_variable->set_allocated_map_key(variable_name);
-        map_key_variable->set_allocated_child(child_variable_type);
-        direct_reference->set_allocated_map_key(map_key_variable);
-        field_reference->set_allocated_direct_reference(direct_reference);
-        result_expression->set_allocated_selection(field_reference);
+        alias->set_allocated_string(alias_str);
+        *list->add_values() = *alias;
+        delete alias;
+
+        substrait::Expression_Literal* return_type = new substrait::Expression_Literal();
+        string* type_left_str = new string(TypeIdToString(lexp->return_type));
+        return_type->set_allocated_string(type_left_str);
+        *list->add_values() = *return_type;
+        delete return_type;
+
+        substrait::Expression_Literal* index = new substrait::Expression_Literal();
+        index->set_i64(lexp->index);
+        *list->add_values() = *index;
+        delete index;
+
         return result_expression;
         // return field_reference;
     }
     else if (expr->type == ExpressionType::VALUE_CONSTANT) {
         BoundConstantExpression* lexp = (BoundConstantExpression*) expr;
 
-        substrait::Expression_FieldReference* field_reference = new substrait::Expression_FieldReference();
-        substrait::Expression_ReferenceSegment* direct_reference = new substrait::Expression_ReferenceSegment();
-        substrait::Expression_ReferenceSegment_MapKey* map_key_variable = new substrait::Expression_ReferenceSegment_MapKey();
-        substrait::Expression_Literal* variable_value = new substrait::Expression_Literal();
-        substrait::Expression_ReferenceSegment* child_variable_type = new substrait::Expression_ReferenceSegment();
-        substrait::Expression_ReferenceSegment_MapKey* map_key_type = new substrait::Expression_ReferenceSegment_MapKey();
-        substrait::Expression_Literal* type = new substrait::Expression_Literal();
+        substrait::Expression_Literal* literal = new substrait::Expression_Literal();
+        result_expression->set_allocated_literal(literal);
+        substrait::Expression_Literal_List* list = new substrait::Expression_Literal_List();
+        literal->set_allocated_list(list);
 
-        string* type_str = new string(TypeIdToString(lexp->return_type));
-        type->set_allocated_string(type_str);
-        map_key_type->set_allocated_map_key(type);
-        child_variable_type->set_allocated_map_key(map_key_type);
+        substrait::Expression_Literal* expr_type = new substrait::Expression_Literal();
+        expr_type->set_i64(static_cast<int>(expr->type));
+        *list->add_values() = *expr_type;
+        delete expr_type;
 
+        substrait::Expression_Literal* return_type = new substrait::Expression_Literal();
+        string* type_left_str = new string(TypeIdToString(lexp->return_type));
+        return_type->set_allocated_string(type_left_str);
+        *list->add_values() = *return_type;
+        delete return_type;
+
+        substrait::Expression_Literal* value = new substrait::Expression_Literal();
         if (lexp->return_type == TypeId::INT64) {
             string* value_str = new string(to_string(lexp->value.GetValue<int64_t>()));
-            variable_value->set_allocated_string(value_str);
+            value->set_allocated_string(value_str);
         }
         else if (lexp->return_type == TypeId::VARCHAR) {
             string* value_str = new string(lexp->value.GetValue<string>());
-            variable_value->set_allocated_string(value_str);
+            value->set_allocated_string(value_str);
         }
+        *list->add_values() = *value;
+        delete value;
 
-        map_key_variable->set_allocated_map_key(variable_value);
-        map_key_variable->set_allocated_child(child_variable_type);
-        direct_reference->set_allocated_map_key(map_key_variable);
-        field_reference->set_allocated_direct_reference(direct_reference);
-        result_expression->set_allocated_selection(field_reference);
         return result_expression;
     }
 }
@@ -149,6 +154,41 @@ void getFilterExpression(const unique_ptr<Expression>& expression, substrait::Fi
 
             filter->add_filter_type(ExpressionTypeToString(expr->type));
         }
+    }
+    else if (expression.get()->type == ExpressionType::COMPARE_BETWEEN) {
+        BoundBetweenExpression* expr = (BoundBetweenExpression*) expression.get();
+        substrait::Expression *expression_input = formulateExpression(expr->input.get());
+        substrait::Expression *expression_lower = formulateExpression(expr->lower.get());
+        substrait::Expression *expression_upper = formulateExpression(expr->upper.get());
+        substrait::Expression *slot = new substrait::Expression();
+
+        substrait::Expression_Literal* literal = new substrait::Expression_Literal();
+        slot->set_allocated_literal(literal);
+        substrait::Expression_Literal_List* list = new substrait::Expression_Literal_List();
+        literal->set_allocated_list(list);
+
+        substrait::Expression_Literal* lower_incl = new substrait::Expression_Literal();
+        lower_incl->set_boolean(expr->lower_inclusive);
+        *list->add_values() = *lower_incl;
+        delete lower_incl;
+
+        substrait::Expression_Literal* upper_incl = new substrait::Expression_Literal();
+        upper_incl->set_boolean(expr->upper_inclusive);
+        *list->add_values() = *upper_incl;
+        delete upper_incl;
+
+        *filter->add_lcondition() = *expression_lower;
+        *filter->add_lcondition() = *expression_input;
+        *filter->add_rcondition() = *expression_upper;
+        *filter->add_rcondition() = *slot;
+
+        filter->add_filter_type(ExpressionTypeToString(expr->type));
+        filter->add_filter_type(ExpressionTypeToString(expr->type));
+
+        delete expression_input;
+        delete expression_lower;
+        delete expression_upper;
+        delete slot;
     }
     else if (expression.get()->type != ExpressionType::CONJUNCTION_AND) {
         BoundComparisonExpression *expr = (BoundComparisonExpression *) expression.get();
