@@ -129,9 +129,20 @@ substrait::Expression* formulateExpression(Expression* expr) {
             string* value_str = new string(to_string(lexp->value.GetValue<int64_t>()));
             value->set_allocated_string(value_str);
         }
+        else if (lexp->return_type == TypeId::INT32) {
+            string* value_str = new string(to_string(lexp->value.GetValue<int32_t>()));
+            value->set_allocated_string(value_str);
+        }
+        else if (lexp->return_type == TypeId::INT16) {
+            string* value_str = new string(to_string(lexp->value.GetValue<int16_t>()));
+            value->set_allocated_string(value_str);
+        }
         else if (lexp->return_type == TypeId::VARCHAR) {
             string* value_str = new string(lexp->value.GetValue<string>());
             value->set_allocated_string(value_str);
+        }
+        else {
+            std::cout << "value constant not support" << std::endl;
         }
         *list->add_values() = *value;
         delete value;
