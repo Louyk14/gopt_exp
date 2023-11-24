@@ -378,6 +378,28 @@ unique_ptr<PhysicalProjection> PbSerializer::GeneratePhysicalProjection(ClientCo
 	}
 }
 
+unique_ptr<Expression> resolveBoundExpression(substrait::Expression expr) {
+    substrait::Expression_Literal literal = expr.literal();
+    ExpressionType expr_type = static_cast<ExpressionType>(literal.list().values(0).i64());
+
+    if (expr_type == ExpressionType::BOUND_REF) {
+        string alias = literal.list().values(1).string();
+        TypeId return_type = TypeIdFromString(literal.list().values(2).string());
+        int index = literal.list().values(3).i64();
+
+        unique_ptr<BoundReferenceExpression> lexp = make_unique<BoundReferenceExpression>(alias,
+                                                                                          return_type,
+                                                                                          index);
+        return lexp;
+    }
+    else if (expr_type == ExpressionType::VALUE_CONSTANT) {
+        TypeId return_type = TypeIdFromString(literal.list().values(1).string());
+        string value_str = literal.list().values(2).string();
+        unique_ptr<BoundConstantExpression> lexp = make_unique<BoundConstantExpression>(getValueFromString(value_str, return_type));
+        return lexp;
+    }
+}
+
 unique_ptr<PhysicalFilter> PbSerializer::GeneratePhysicalFilter(ClientContext& context, const substrait::FilterRel& filter_rel, unordered_map<std::string, duckdb::TableCatalogEntry *> &table_entry,
                                                                         unordered_map<std::string, int> &table_index, int& index) {
     vector<TypeId> get_types;
@@ -394,45 +416,35 @@ unique_ptr<PhysicalFilter> PbSerializer::GeneratePhysicalFilter(ClientContext& c
         if (filter_type == ExpressionType::OPERATOR_IS_NULL) {
             const substrait::Expression expression_left = filter_rel.lcondition(i);
             unique_ptr<BoundOperatorExpression> expr = make_unique<BoundOperatorExpression>(filter_type, TypeId::BOOL);
-            expr->children.push_back(move(getBoundReferenceExpression(expression_left)));
+            expr->children.push_back(move(resolveBoundExpression(expression_left)));
+            select_list.push_back(move(expr));
+        }
+        else if (filter_type == ExpressionType::COMPARE_BETWEEN) {
+            const substrait::Expression expression_lower = filter_rel.lcondition(i);
+            const substrait::Expression expression_upper = filter_rel.rcondition(i);
+            const substrait::Expression expression_input = filter_rel.lcondition(++i);
+            const substrait::Expression slot = filter_rel.rcondition(i);
+
+            const substrait::Expression_Literal_List list = slot.literal().list();
+            bool lower_inclusive = list.values(0).boolean();
+            bool upper_inclusive = list.values(1).boolean();
+
+            unique_ptr<BoundBetweenExpression> expr = make_unique<BoundBetweenExpression>(resolveBoundExpression(expression_input),
+                                                                                          resolveBoundExpression(expression_lower),
+                                                                                          resolveBoundExpression(expression_upper),
+                                                                                          lower_inclusive, upper_inclusive);
             select_list.push_back(move(expr));
         }
         else {
             const substrait::Expression expression_left = filter_rel.lcondition(i);
             const substrait::Expression expression_right = filter_rel.rcondition(i);
 
-            bool left_ref = expression_left.selection().direct_reference().map_key().child().map_key().has_child();
-            bool right_ref = expression_right.selection().direct_reference().map_key().child().map_key().has_child();
-
-            if (left_ref && right_ref) {
-                unique_ptr<BoundComparisonExpression> expr = make_unique<BoundComparisonExpression>(filter_type,
-                                                                                                    move(getBoundReferenceExpression(
-                                                                                                            expression_left)),
-                                                                                                    move(getBoundReferenceExpression(
-                                                                                                            expression_right)));
-                select_list.push_back(move(expr));
-            } else if (!left_ref && right_ref) {
-                unique_ptr<BoundComparisonExpression> expr = make_unique<BoundComparisonExpression>(filter_type,
-                                                                                                    move(getBoundConstantExpression(
-                                                                                                            expression_left)),
-                                                                                                    move(getBoundReferenceExpression(
-                                                                                                            expression_right)));
-                select_list.push_back(move(expr));
-            } else if (left_ref && !right_ref) {
-                unique_ptr<BoundComparisonExpression> expr = make_unique<BoundComparisonExpression>(filter_type,
-                                                                                                    move(getBoundReferenceExpression(
-                                                                                                            expression_left)),
-                                                                                                    move(getBoundConstantExpression(
-                                                                                                            expression_right)));
-                select_list.push_back(move(expr));
-            } else if (!left_ref && !right_ref) {
-                unique_ptr<BoundComparisonExpression> expr = make_unique<BoundComparisonExpression>(filter_type,
-                                                                                                    move(getBoundConstantExpression(
-                                                                                                            expression_left)),
-                                                                                                    move(getBoundConstantExpression(
-                                                                                                            expression_right)));
-                select_list.push_back(move(expr));
-            }
+            unique_ptr<BoundComparisonExpression> expr = make_unique<BoundComparisonExpression>(filter_type,
+                                                                                                move(resolveBoundExpression(
+                                                                                                        expression_left)),
+                                                                                                move(resolveBoundExpression(
+                                                                                                        expression_right)));
+            select_list.push_back(move(expr));
         }
     }
 
