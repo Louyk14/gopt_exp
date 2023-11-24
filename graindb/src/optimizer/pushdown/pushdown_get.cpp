@@ -23,7 +23,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 	}
 	//! FIXME: We only need to skip if the index is in the column being filtered
 	if (!get.table || !get.table->storage->info->indexes.empty()) {
-        bool possible = false;
+        bool possible = true;
         for (int i = 0; i < get.table->storage->info->indexes.size(); ++i) {
             for (int j = 0; j < filters.size(); ++j) {
                 int bound_id = get.table->storage->info->indexes[j]->column_ids[0];
@@ -53,7 +53,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
                             break;
                         }
                     }
-                }
+                } 
             }
             if (possible)
                 break;

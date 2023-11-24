@@ -414,7 +414,7 @@ substrait::Rel* PhysicalTableScan::ToSubstraitClass(unordered_map<int, string>& 
 
 	substrait::ReadRel_NamedTable* named_table = new substrait::ReadRel_NamedTable();
 	named_table->add_names(table.info->table);
-std::cout << table.info->table << " " << table_filters.size() << std::endl;
+    
     substrait::Expression* filter = new substrait::Expression();
     substrait::Expression_Nested* nested_filter = new substrait::Expression_Nested();
     filter->set_allocated_nested(nested_filter);
@@ -428,7 +428,7 @@ std::cout << table.info->table << " " << table_filters.size() << std::endl;
 				substrait::Expression_ScalarFunction* scalar_function = new substrait::Expression_ScalarFunction();
 
                 int comp_type = static_cast<int>(pair.second[i].comparison_type);
-		std::cout << comp_type << " " << ExpressionTypeToString(pair.second[i].comparison_type) << " " << ExpressionTypeToString(static_cast<ExpressionType>(comp_type)) << std::endl;
+		// std::cout << comp_type << " " << ExpressionTypeToString(pair.second[i].comparison_type) << " " << ExpressionTypeToString(static_cast<ExpressionType>(comp_type)) << std::endl;
                 scalar_function->set_function_reference(comp_type);
 
 				substrait::Type* output_type = new substrait::Type();
