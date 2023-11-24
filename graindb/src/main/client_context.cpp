@@ -277,7 +277,7 @@ unique_ptr<QueryResult> ClientContext::ExecutePreparedStatementFromPb(std::strin
                 file_name += pb_file[str_index];
         }
         
-        std::fstream time_file("results/" + file_name + "_test.log", std::ios::app);
+        std::fstream time_file("results/" + file_name + ".log", std::ios::app);
         time_file << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
         time_file.close();
 
@@ -322,6 +322,9 @@ unique_ptr<QueryResult> ClientContext::ExecutePreparedStatement(const string &qu
 		return result;
 	}
 
+//std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> start =
+//            std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+
 	while (true) {
 		auto chunk = FetchInternal();
 		if (chunk->size() == 0) {
@@ -336,6 +339,12 @@ unique_ptr<QueryResult> ClientContext::ExecutePreparedStatement(const string &qu
 #endif
 		result->collection.Append(*chunk);
 	}
+
+//std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> end =
+//            std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+
+//        std::cout << "Execution Time Cost: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+
 
 	return move(result);
 }

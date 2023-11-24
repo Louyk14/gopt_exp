@@ -79,5 +79,7 @@ public:
                                                     unordered_map<std::string, int> &table_index, int& index);
     unique_ptr<PhysicalRecursiveCTE> GeneratePhysicalRecursiveCTE(ClientContext& context, const substrait::RecursiveCTERel& recur_cte_rel, unordered_map<std::string, duckdb::TableCatalogEntry *> &table_entry,
                                                     unordered_map<std::string, int> &table_index, int& index);
+    unique_ptr<PhysicalIndexScan> GeneratePhysicalIndexScan(ClientContext& context, const substrait::ReadRel& read_rel, unordered_map<std::string, duckdb::TableCatalogEntry *> &table_entry,
+                                                                  unordered_map<std::string, int> &table_index, int& index);
 };
 }

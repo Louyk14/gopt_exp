@@ -74,3 +74,66 @@ string PhysicalIndexScan::ExtraRenderInformation() const {
 unique_ptr<PhysicalOperatorState> PhysicalIndexScan::GetOperatorState() {
 	return make_unique<PhysicalIndexScanOperatorState>();
 }
+
+substrait::Rel* PhysicalIndexScan::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
+    substrait::Rel* index_scan_rel = new substrait::Rel();
+    substrait::ReadRel* read = new substrait::ReadRel();
+    substrait::RelCommon* common = new substrait::RelCommon();
+    substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
+
+    for (int i = 0; i < column_ids.size(); ++i) {
+        emit->add_output_mapping(column_ids[i]);
+        if (column_ids[i] == COLUMN_IDENTIFIER_ROW_ID) {
+            emit->add_output_types(TypeIdToString(TypeId::INT64));
+        }
+        else {
+            emit->add_output_types(TypeIdToString(table.GetColumn(column_ids[i])->type));
+        }
+    }
+
+    if (low_index) {
+        emit->add_output_exp_type(TypeIdToString(low_value.type));
+        emit->add_output_names("LOW");
+        emit->add_output_names(low_value.ToString());
+        emit->add_output_order(static_cast<int>(low_expression_type));
+    }
+    else {
+        emit->add_output_exp_type("");
+        emit->add_output_names("NLOW");
+        emit->add_output_names("");
+    }
+    if (high_index) {
+        emit->add_output_exp_type(TypeIdToString(high_value.type));
+        emit->add_output_names("HIGH");
+        emit->add_output_names(high_value.ToString());
+        emit->add_output_order(static_cast<int>(high_expression_type));
+    }
+    else {
+        emit->add_output_exp_type("");
+        emit->add_output_names("NHIGH");
+        emit->add_output_names("");
+    }
+    if (equal_index) {
+        emit->add_output_exp_type(TypeIdToString(equal_value.type));
+        emit->add_output_names("EQUAL");
+        emit->add_output_names(equal_value.ToString());
+    }
+    else {
+        emit->add_output_exp_type("");
+        emit->add_output_names("NEQUAL");
+        emit->add_output_names("");
+    }
+
+    common->set_allocated_emit(emit);
+
+    substrait::ReadRel_NamedTable* named_table = new substrait::ReadRel_NamedTable();
+    named_table->add_names(table.info->table);
+    named_table->add_names(to_string(index.column_ids[0]));
+
+    read->set_allocated_common(common);
+    read->set_allocated_named_table(named_table);
+
+    index_scan_rel->set_allocated_read(read);
+
+    return index_scan_rel;
+}

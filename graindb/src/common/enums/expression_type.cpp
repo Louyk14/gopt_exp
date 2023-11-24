@@ -1,6 +1,7 @@
 #include "duckdb/common/enums/expression_type.hpp"
 
 #include "duckdb/common/exception.hpp"
+#include <iostream>
 
 using namespace std;
 
@@ -148,6 +149,10 @@ ExpressionType ExpressionTypeFromString(string type) {
         return ExpressionType::BOUND_REF;
     else if (type == "CAST")
         return ExpressionType::OPERATOR_CAST;
+    else if (type == "COMPARE_BETWEEN")
+        return ExpressionType::COMPARE_BETWEEN;
+    else
+	std::cout << type << std::endl;
 }
 
 string ExpressionTypeToOperator(ExpressionType type) {

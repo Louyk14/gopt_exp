@@ -364,10 +364,20 @@ TEST_CASE("Test ldbc ic5", "[rai]") {
 
 	// auto roq = con.Query("SELECT * FROM Person p1, Knows k1 WHERE p1.id = k1.id1 AND p1.id = 1 AND k1.id1 = 1");
 
-	auto roq = con.Query("select title from (select title, f.id as f_forumid, p2.id2 as k_person2id from Forum f, HasMember hm, "
+	/*auto roq = con.Query("select title from (select title, f.id as f_forumid, p2.id2 as k_person2id from Forum f, HasMember hm, "
 	                     "( select id2 from Knows where id1 = \'4398046511628\') p2 where f.id = hm.forumid and hm.personid = p2.id2) tmp, "
 	                     "HasCreator hc, Post po, ContainerOf cof where tmp.f_forumid = cof.forumid and cof.postid = po.id and po.id = hc.postid "
-	                     "and hc.personid = tmp.k_person2id");
+	                     "and hc.personid = tmp.k_person2id");*/
+
+    auto roq = con.Query("select id2\n"
+                         "   from Knows\n"
+                         "   where\n"
+                         "   id1 = 1\n"
+                         "   union\n"
+                         "   select k2.id2\n"
+                         "   from Knows k1, Knows k2\n"
+                         "   where\n"
+                         "   k1.id1 = 1 and k1.id2 = k2.id1 and k2.k_person2id <> 1;")
 
 	roq->Print();
 

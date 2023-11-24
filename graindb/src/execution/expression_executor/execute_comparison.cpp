@@ -44,7 +44,8 @@ void ExpressionExecutor::Execute(BoundComparisonExpression &expr, ExpressionStat
 	case ExpressionType::COMPARE_DISTINCT_FROM:
 		throw NotImplementedException("Unimplemented compare: COMPARE_DISTINCT_FROM");
 	default:
-		throw NotImplementedException("Unknown comparison type!");
+		std::cout << "here" << std::endl;
+		// throw NotImplementedException("Unknown comparison type!");
 	}
 }
 
@@ -98,6 +99,7 @@ idx_t ExpressionExecutor::Select(BoundComparisonExpression &expr, ExpressionStat
 	case ExpressionType::COMPARE_DISTINCT_FROM:
 		throw NotImplementedException("Unimplemented compare: COMPARE_DISTINCT_FROM");
 	default:
-		throw NotImplementedException("Unknown comparison type!");
+		std::cout << "there " << expr.ToString() << " " << ExpressionTypeToString(expr.type) << std::endl;
+		//throw NotImplementedException("Unknown comparison type!");
 	}
 }

@@ -152,11 +152,9 @@ void CreateGraphFromSQL(Connection& con, string schema_path="", string load_path
 
     std::ifstream constraint_file(constraint_path, std::ios::in);
     if (constraint_file) {
-	std::cout << "BUILD NORMAL INDEX" << std::endl;
         std::stringstream buffer_constraint;
-        buffer_constraint << constraint_file.rdbuf();
+        buffer_constraint << load_file.rdbuf();
         string constraint_sql(buffer_constraint.str());
-        replace_all(constraint_sql, "\n", "");
         con.Query(constraint_sql);
     }
     constraint_file.close();
@@ -235,14 +233,13 @@ void CreateGraph(Connection& con) {
 }
 
 void buildIndex(Connection& con) {
-    con.Query("CREATE UNDIRECTED RAI knows_rai ON knows (FROM k_person1id REFERENCES person.p_personid, TO k_person2id REFERENCES person.p_personid)");
-    con.Query("CREATE UNDIRECTED RAI forum_person_rai ON forum_person (FROM fp_forumid REFERENCES forum.f_forumid, TO fp_personid REFERENCES person.p_personid)");
-    con.Query("CREATE UNDIRECTED RAI forum_tag_rai ON forum_tag (FROM ft_forumid REFERENCES forum.f_forumid, TO ft_tagid REFERENCES tag.t_tagid)");
-    con.Query("CREATE UNDIRECTED RAI person_tag_rai ON person_tag (FROM pt_personid REFERENCES person.p_personid, TO pt_tagid REFERENCES tag.t_tagid)");
-    con.Query("CREATE UNDIRECTED RAI person_university_rai ON person_university (FROM pu_personid REFERENCES person.p_personid, TO pu_organisationid REFERENCES organisation.o_organisationid)");
-    con.Query("CREATE UNDIRECTED RAI person_company_rai ON person_company (FROM pc_personid REFERENCES person.p_personid, TO pc_organisationid REFERENCES organisation.o_organisationid)");
-    con.Query("CREATE UNDIRECTED RAI message_tag_rai ON message_tag (FROM mt_messageid REFERENCES message.m_messageid, TO mt_tagid REFERENCES tag.t_tagid)");
-    //con.Query("CREATE UNDIRECTED RAI hasCreator_rai ON HasCreator (FROM postId REFERENCES Post.id, TO personId REFERENCES Person.id)");
+    con.Query("CREATE UNDIRECTED RAI knows_rai ON Knows (FROM id1 REFERENCES Person.id, TO id2 REFERENCES Person.id)");
+    con.Query("CREATE UNDIRECTED RAI hasMember_rai ON HasMember (FROM forumId REFERENCES Forum.id, TO personId REFERENCES Person.id)");
+    // con.Query("CREATE RAI hasMember_rai_back ON HasMember (FROM personId REFERENCES Person.id, TO forumId REFERENCES Forum.id)");
+    con.Query("CREATE UNDIRECTED RAI containerOf_rai ON ContainerOf (FROM forumId REFERENCES Forum.id, TO postId REFERENCES Post.id)");
+    // con.Query("CREATE RAI containerOf_rai_back ON ContainerOf (FROM postId REFERENCES Post.id, TO forumId REFERENCES Forum.id)");
+    con.Query("CREATE UNDIRECTED RAI hasCreator_rai ON HasCreator (FROM postId REFERENCES Post.id, TO personId REFERENCES Person.id)");
+    // con.Query("CREATE RAI hasCreator_rai_back ON HasCreator (FROM personId REFERENCES Person.id, TO postId REFERENCES Post.id)");
 }
 
 unique_ptr<PhysicalTableScan> get_scan_function(ClientContext& context, string& table_name, idx_t table_index,
@@ -265,21 +262,18 @@ unique_ptr<PhysicalTableScan> get_scan_function(ClientContext& context, string& 
 }
 
 
-
-
 void create_db_conn(DuckDB& db, Connection& con) {
-    std::cout << "BUILD RAI INDEX" << std::endl;
     con.DisableProfiling();
     con.context->transaction.SetAutoCommit(false);
     con.context->transaction.BeginTransaction();
 
     // CreateGraph(con);
-    // CreateGraphFromFile(con);
+    CreateGraphFromFile(con);
 
-    // con.context->transaction.Commit();
+    con.context->transaction.Commit();
 
-    // con.context->transaction.SetAutoCommit(false);
-    // con.context->transaction.BeginTransaction();
+    con.context->transaction.SetAutoCommit(false);
+    con.context->transaction.BeginTransaction();
 
     buildIndex(con);
 
@@ -333,19 +327,12 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
         int last = 0;
         int indexer = 0;
         data += "|";
-        vector<string> tokenizers;
 
         string query_template_tmp(query_template);
         while ((pos = data.find(delimiter, last)) != std::string::npos) {
             string token = data.substr(last, pos - last);
-            tokenizers.push_back(token);
             if (data_types[indexer] == "VARCHAR")
                 token = "\'" + token + "\'";
-            if (slots[indexer] == ":durationDays") {
-                long long dur = atoll(token.c_str()) * 86400000;
-                long long end_time = atoll(tokenizers[indexer - 1].c_str()) + dur;
-                token = to_string(end_time);
-            }
             replace_all(query_template_tmp, slots[indexer], token);
             indexer += 1;
             last = pos + 1;
@@ -357,10 +344,44 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
 
 string get_test_query(int index) {
     if (index == 0) {
-        return "select k2.k_person2id\n"
-               "   from Knows k1, Knows k2\n"
+        return "select p_personid, p_firstname, p_lastname, ct1, ct2, totalcount\n"
+               "from\n"
+               " ( select k_person2id\n"
+               "   from knows\n"
                "   where\n"
-               "   k1.k_person1id = 1 and k1.k_person2id = k2.k_person1id and k2.k_person2id <> 1;";
+               "   k_person1id = 24189255821418\n"
+               "   union\n"
+               "   select k2.k_person2id\n"
+               "   from knows k1, knows k2\n"
+               "   where\n"
+               "   k1.k_person1id = 24189255821418 and k1.k_person2id = k2.k_person1id and k2.k_person2id <> 24189255821418\n"
+               " ) f, person, place p1, place p2,\n"
+               " (\n"
+               "  select chn.m_c_creatorid, ct1, ct2, ct1 + ct2 as totalcount\n"
+               "  from\n"
+               "   (\n"
+               "      select m_creatorid as m_c_creatorid, count(*) as ct1 from message, place\n"
+               "      where\n"
+               "        m_locationid = pl_placeid and pl_name = 'Mauritania' and\n"
+               "        m_creationdate >= 1296518400000 and  m_creationdate < 1296518400000 + 86400000 * 33\n"
+               "      group by m_c_creatorid\n"
+               "   ) chn,\n"
+               "   (\n"
+               "      select m_creatorid as m_c_creatorid, count(*) as ct2 from message, place\n"
+               "      where\n"
+               "        m_locationid = pl_placeid and pl_name = 'Liberia' and\n"
+               "        m_creationdate >= 1296518400000 and  m_creationdate < (1296518400000 + 86400000 * 33)\n"
+               "      group by m_creatorid\n"
+               "   ) ind\n"
+               "  where CHN.m_c_creatorid = IND.m_c_creatorid\n"
+               " ) cpc\n"
+               "where\n"
+               "f.k_person2id = p_personid and p_placeid = p1.pl_placeid and\n"
+               "p1.pl_containerplaceid = p2.pl_placeid and p2.pl_name <> 'Mauritania' and p2.pl_name <> 'Liberia' and\n"
+               "f.k_person2id = cpc.m_c_creatorid\n"
+               "order by totalcount desc, p_personid asc\n"
+               "limit 20\n"
+               ";";
     }
     else if (index == 1) {
         return "select\n"
@@ -643,92 +664,50 @@ string get_test_query(int index) {
     }
 }
 
-int main(int argc, char** args) {
+int main() {
     int count_num = 50;
-    int mode = atoi(args[1]);
-    int start_query_index = atoi(args[2]);
-    int end_query_index = atoi(args[3]);
-    string dataset(args[4]);
-    string suffix(args[5]);
-    string normal_index(args[6]);
     // vector<string> constantval_list;
     // getStringListFromFile("../../../../dataset/ldbc/sf1/person_0_0.csv", 0, count_num, constantval_list);
     // constantval_list.push_back("4398046511870");
 
-    // string query_index = "2";
-    // vector<string> generated_queries;
-    // string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index + ".sql";
-    // string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/sf01/interactive_" + query_index + "_param.txt";
-    // generate_queries(query_path, para_path, generated_queries);
+    vector<string> generated_queries;
+    //string query_path = "../../../../dataset/ldbc/query/queries/interactive-complex-1.sql";
+    //string para_path = "../../../../dataset/ldbc/query/paras/ic1.param";
+    //generate_queries(query_path, para_path, generated_queries);
 
-    // std::cout << "Generate Queries Over" << std::endl;
+    std::cout << "Generate Queries Over" << std::endl;
 
-    // string schema_path = "../../../resource/schema.sql";
-    // string load_path = "../../../resource/load.sql";
-    // string constraint_path = "../../../resource/constraints.sql";
-    string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
-    string load_path = "../../../../dataset/ldbc-merge/load.sql";
-    string constraint_path = "";
-    if (normal_index != "-1")
-    	constraint_path = "../../../../dataset/ldbc-merge/constraints.sql";
+    string schema_path = "../../../resource/schema.sql";
+    string load_path = "../../../resource/load.sql";
 
     DuckDB db(nullptr);
     Connection con(db);
-    std::cout << normal_index << " " << constraint_path << std::endl; 
-    CreateGraphFromSQL(con, schema_path, load_path, constraint_path);
-    if (suffix != "-1")
-    	create_db_conn(db, con);
+    // create_db_conn(db, con);
 
-    string suffix_str = "";
-    if (suffix != "-1")
-        suffix_str += "_" + suffix;
-    if (normal_index != "-1")
-        suffix_str += "_" + normal_index;
+    CreateGraphFromSQL(con, schema_path, load_path);
 
-
-    /*std::fstream outfile("output.txt", std::ios::out);
-    for (int i = 0; i < generated_queries.size(); ++i)
-        outfile << generated_queries[i] << std::endl << std::endl;
-    outfile.close();*/
-    for (int query_index = start_query_index; query_index < end_query_index; ++query_index) {
-        if (query_index == 10)
-            continue;
-        string query_index_str = to_string(query_index);
-        vector<string> generated_queries;
-        string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index_str + ".sql";
-        string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/" + dataset + "/interactive_" + query_index_str + "_param.txt";
-        generate_queries(query_path, para_path, generated_queries);
-        
-    /*std::fstream outfile("output.txt", std::ios::out);
-    for (int i = 0; i < generated_queries.size(); ++i)
-        outfile << generated_queries[i] << std::endl << std::endl;
-    outfile.close();
-*/
-        for (int i = 0; i < 1; ++i) {//generated_queries.size(); ++i) {
-            con.context->transaction.SetAutoCommit(false);
-            con.context->transaction.BeginTransaction();
-            std::cout << generated_queries[i] << std::endl;
-            // con.context->SetPbParameters(mode, "./output.log");
-            con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
-            /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
+    // offload to the disk
+    for (int i = 0; i < 1; ++i) {//generated_queries.size(); ++i) {
+        con.context->transaction.SetAutoCommit(false);
+        con.context->transaction.BeginTransaction();
+        // std::cout << i << std::endl;
+        con.context->SetPbParameters(2, "../../../output/sf1/duckdb/query" + to_string(i) + ".log");
+        /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
                             "    where pu_personid = 6597069767674 and pu_organisationid = o2.o_organisationid and o2.o_placeid =p2.pl_placeid\n"
                             "    group by pu_personid");
-            r1->Print();
-            break;*/
-            // auto result = con.Query("select count(*) from organisation limit 20;");
-            auto result = con.Query(generated_queries[i]);
-            // auto result = con.Query(get_test_query(1));
+        r1->Print();
+        break;*/
+        auto result = con.Query(get_test_query(7));
 
-            //con.QueryPb(generated_queries[i]);
-            /*con.QueryPb("SELECT f.title FROM "
+        //con.QueryPb(generated_queries[i]);
+        /*con.QueryPb("SELECT f.title FROM "
                         "Knows k1, Person p2, HasMember hm, Forum f, ContainerOf cof, Post po, HasCreator hc "
                         "WHERE p2.id = k1.id2 AND p2.id = hm.personId AND f.id = hm.forumId AND f.id = cof.forumId AND "
                         "po.id = cof.postId AND po.id = hc.postId AND p2.id = hc.personId AND k1.id1 = \'"
                         + constantval_list[i] + "\'");
-            */
-            //con.context->transaction.Commit();
-            //result->Print();
-        }
+        */
+        //con.context->transaction.Commit();
+        result->Print();
     }
 }
