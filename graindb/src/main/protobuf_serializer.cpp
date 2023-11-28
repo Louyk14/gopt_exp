@@ -411,6 +411,8 @@ unique_ptr<PhysicalFilter> PbSerializer::GeneratePhysicalFilter(ClientContext& c
 
     vector<unique_ptr<Expression>> select_list;
 
+    ExpressionType exp_type = ExpressionTypeFromString(filter_rel.type());
+
     for (int i = 0; i < filter_rel.lcondition_size(); ++i) {
         ExpressionType filter_type = ExpressionTypeFromString(filter_rel.filter_type(i));
         if (filter_type == ExpressionType::OPERATOR_IS_NULL) {
@@ -446,6 +448,15 @@ unique_ptr<PhysicalFilter> PbSerializer::GeneratePhysicalFilter(ClientContext& c
                                                                                                         expression_right)));
             select_list.push_back(move(expr));
         }
+    }
+
+    if (exp_type == ExpressionType::CONJUNCTION_OR) {
+        auto conjunction = make_unique<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
+        for (auto &expr : select_list) {
+            conjunction->children.push_back(move(expr));
+        }
+        select_list.clear();
+        select_list.push_back(move(conjunction));
     }
 
     // std::cout << "project " << index << std::endl;

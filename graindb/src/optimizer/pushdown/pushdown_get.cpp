@@ -55,7 +55,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
                     }
                 }
                 else if (filters[j]->filter->type == ExpressionType::OPERATOR_IS_NULL) {
-			BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
+                    BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
                     for (int k = 0; k < expr->children.size(); ++k) {
                         if (expr->children[k]->alias == get.table->columns[bound_id].name) {
                             possible = true;
@@ -64,7 +64,20 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
                     }
                     if (possible)
                         break;
-		}
+                }
+                else if (filters[j]->filter->type == ExpressionType::COMPARE_IN) {
+                    BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
+                    for (int k = 0; k < expr->children.size(); ++k) {
+                        if (expr->children[k]->type == ExpressionType::BOUND_COLUMN_REF) {
+                            if (expr->children[k]->alias == get.table->columns[bound_id].name) {
+                                possible = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (possible)
+                        break;
+                }
                 else {
                     std::cout << "Unsolved Expression Type in Pushdown Get" << std::endl;
                     possible = true;
