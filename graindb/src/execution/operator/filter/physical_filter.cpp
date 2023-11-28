@@ -149,6 +149,9 @@ substrait::Expression* formulateExpression(Expression* expr) {
 
         return result_expression;
     }
+    else if (expr->type == ExpressionType::CONJUNCTION_OR) {
+        return result_expression;
+    }
 }
 
 void getFilterExpression(const unique_ptr<Expression>& expression, substrait::FilterRel *filter) {
@@ -200,6 +203,13 @@ void getFilterExpression(const unique_ptr<Expression>& expression, substrait::Fi
         delete expression_lower;
         delete expression_upper;
         delete slot;
+    }
+    else if (expression.get()->type == ExpressionType::CONJUNCTION_OR) {
+        BoundConjunctionExpression* expr = (BoundConjunctionExpression*) expression.get();
+
+        for (int i = 0; i < expr->children.size(); ++i) {
+            getFilterExpression(expr->children[i], filter);
+        }
     }
     else if (expression.get()->type != ExpressionType::CONJUNCTION_AND) {
         BoundComparisonExpression *expr = (BoundComparisonExpression *) expression.get();

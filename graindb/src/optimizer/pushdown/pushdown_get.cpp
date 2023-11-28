@@ -26,7 +26,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
         bool possible = false;
         for (int i = 0; i < get.table->storage->info->indexes.size(); ++i) {
             for (int j = 0; j < filters.size(); ++j) {
-                int bound_id = get.table->storage->info->indexes[j]->column_ids[0];
+                int bound_id = get.table->storage->info->indexes[i]->column_ids[0];
                 if (filters[j]->filter->type == ExpressionType::COMPARE_BETWEEN) {
                     BoundBetweenExpression* expr = (BoundBetweenExpression*) filters[j]->filter.get();
                     if (expr->input->alias == get.table->columns[bound_id].name) {
@@ -65,6 +65,19 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
                     if (possible)
                         break;
                 }
+                else if (filters[j]->filter->type == ExpressionType::COMPARE_IN) {
+                    BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
+                    for (int k = 0; k < expr->children.size(); ++k) {
+                        if (expr->children[k]->type == ExpressionType::BOUND_COLUMN_REF) {
+                            if (expr->children[k]->alias == get.table->columns[bound_id].name) {
+                                possible = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (possible)
+                        break;
+                }
                 else {
                     std::cout << "Unsolved Expression Type in Pushdown Get" << std::endl;
                     possible = true;
@@ -75,7 +88,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
                 break;
         }
 
-        if (possible) {
+        if (possible || filters.empty()) {
             //! now push any existing filters
             if (filters.empty()) {
                 //! no filters to push

@@ -150,6 +150,8 @@ ExpressionType ExpressionTypeFromString(string type) {
         return ExpressionType::OPERATOR_CAST;
     else if (type == "COMPARE_BETWEEN")
         return ExpressionType::COMPARE_BETWEEN;
+    else if (type == "OR")
+        return ExpressionType::CONJUNCTION_OR;
 }
 
 string ExpressionTypeToOperator(ExpressionType type) {

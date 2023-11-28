@@ -875,7 +875,7 @@ unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOpera
 	}
 
 	// we first set the cardinalities of tables with predicates to 1
-	vector<idx_t> table_indices, new_cards;
+	/*vector<idx_t> table_indices, new_cards;
 	vector<unordered_set<idx_t>> join_sets;
 	findGetWithFilters(op, table_indices);
 	for (int i = 0; i < table_indices.size(); ++i) {
@@ -883,7 +883,7 @@ unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOpera
 		join_sets.push_back(join_set);
 		new_cards.push_back(1);
 	}
-	SetCardinality(join_sets, new_cards);
+	SetCardinality(join_sets, new_cards);*/
 
 #if ENABLE_CARD_INJECTION
 	if (context.enable_cardinality_injection && !context.injected_cardinality.empty()) {
