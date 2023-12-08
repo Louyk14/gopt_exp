@@ -760,11 +760,6 @@ int main(int argc, char** args) {
     // getStringListFromFile("../../../../dataset/ldbc/sf1/person_0_0.csv", 0, count_num, constantval_list);
     // constantval_list.push_back("4398046511870");
 
-    NextPowerOfTwo(1);
-    NextPowerOfTwo(2);
-    NextPowerOfTwo(254);
-    NextPowerOfTwo(113264);
-
     // string query_index = "2";
     // vector<string> generated_queries;
     // string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index + ".sql";
