@@ -4,21 +4,12 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/function/aggregate_function.hpp"
 
-using namespace std;
-
 namespace duckdb {
 
 void BuiltinFunctions::RegisterDistributiveAggregates() {
-	Register<BitAndFun>();
-	Register<BitOrFun>();
-	Register<BitXorFun>();
 	Register<CountStarFun>();
 	Register<CountFun>();
 	Register<FirstFun>();
-	Register<MaxFun>();
-	Register<MinFun>();
-	Register<SumFun>();
-	Register<StringAggFun>();
 }
 
 } // namespace duckdb

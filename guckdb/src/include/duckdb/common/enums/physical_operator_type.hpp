@@ -17,91 +17,106 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 enum class PhysicalOperatorType : uint8_t {
 	INVALID,
-	LEAF,
 	ORDER_BY,
 	LIMIT,
+	STREAMING_LIMIT,
+	LIMIT_PERCENT,
 	TOP_N,
-	AGGREGATE,
 	WINDOW,
 	UNNEST,
-	DISTINCT,
-	SIMPLE_AGGREGATE,
+	UNGROUPED_AGGREGATE,
 	HASH_GROUP_BY,
-	SORT_GROUP_BY,
+	PERFECT_HASH_GROUP_BY,
 	FILTER,
 	PROJECTION,
-	COPY_FROM_FILE,
 	COPY_TO_FILE,
-	TABLE_FUNCTION,
+	BATCH_COPY_TO_FILE,
+	FIXED_BATCH_COPY_TO_FILE,
+	RESERVOIR_SAMPLE,
+	STREAMING_SAMPLE,
+	STREAMING_WINDOW,
+	PIVOT,
+
 	// -----------------------------
 	// Scans
 	// -----------------------------
+	TABLE_SCAN,
 	DUMMY_SCAN,
-	SEQ_SCAN,
-	INDEX_SCAN,
-	LOOKUP,
+	COLUMN_DATA_SCAN,
 	CHUNK_SCAN,
+	RECURSIVE_CTE_SCAN,
+	CTE_SCAN,
 	DELIM_SCAN,
-	EXTERNAL_FILE_SCAN,
-	QUERY_DERIVED_SCAN,
 	EXPRESSION_SCAN,
+	POSITIONAL_SCAN,
 	// -----------------------------
 	// Joins
 	// -----------------------------
 	BLOCKWISE_NL_JOIN,
 	NESTED_LOOP_JOIN,
 	HASH_JOIN,
-	CROSS_PRODUCT,
-	PIECEWISE_MERGE_JOIN,
+    CROSS_PRODUCT,
+    PIECEWISE_MERGE_JOIN,
+    SIP_JOIN,
+    MERGE_SIP_JOIN,
+    IE_JOIN,
 	DELIM_JOIN,
-	ADJACENCY_JOIN,
-	SIP_JOIN,
-	ADAPTIVE_SIP_JOIN,
-	RAI_JOIN,
-	MERGE_RAI_JOIN,
-	MERGE_SIP_JOIN,
-	ADAPTIVE_MERGE_SIP_JOIN,
-
+	INDEX_JOIN,
+	POSITIONAL_JOIN,
+	ASOF_JOIN,
 	// -----------------------------
 	// SetOps
 	// -----------------------------
 	UNION,
 	RECURSIVE_CTE,
+	CTE,
 
 	// -----------------------------
 	// Updates
 	// -----------------------------
 	INSERT,
-	INSERT_SELECT,
-	DELETE,
+	BATCH_INSERT,
+	DELETE_OPERATOR,
 	UPDATE,
-	EXPORT_EXTERNAL_FILE,
 
 	// -----------------------------
 	// Schema
 	// -----------------------------
-	CREATE,
+	CREATE_TABLE,
+	CREATE_TABLE_AS,
+	BATCH_CREATE_TABLE_AS,
 	CREATE_INDEX,
-	CREATE_RAI,
 	ALTER,
 	CREATE_SEQUENCE,
 	CREATE_VIEW,
 	CREATE_SCHEMA,
+	CREATE_MACRO,
 	DROP,
 	PRAGMA,
 	TRANSACTION,
+	CREATE_TYPE,
+	ATTACH,
+	DETACH,
+    CREATE_RAI,
 
 	// -----------------------------
 	// Helpers
 	// -----------------------------
 	EXPLAIN,
+	EXPLAIN_ANALYZE,
 	EMPTY_RESULT,
 	EXECUTE,
 	PREPARE,
-	VACUUM
+	VACUUM,
+	EXPORT,
+	SET,
+	LOAD,
+	INOUT_FUNCTION,
+	RESULT_COLLECTOR,
+	RESET,
+	EXTENSION
 };
 
 string PhysicalOperatorToString(PhysicalOperatorType type);
-PhysicalOperatorType PhysicalOperatorFromString(string type);
 
 } // namespace duckdb

@@ -8,38 +8,55 @@
 
 #pragma once
 
-#include "duckdb/storage/checkpoint_manager.hpp"
-#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/storage/checkpoint/row_group_writer.hpp"
 
 namespace duckdb {
-class UncompressedSegment;
-class SegmentStatistics;
+class DuckTableEntry;
+class TableStatistics;
 
-//! The table data writer is responsible for writing the data of a table to the block manager
+//! The table data writer is responsible for writing the data of a table to
+//! storage.
+//
+//! This is meant to encapsulate and abstract:
+//!  - Storage/encoding of table metadata (block pointers)
+//!  - Mapping management of data block locations
+//! Abstraction will support, for example: tiering, versioning, or splitting into multiple block managers.
 class TableDataWriter {
 public:
-	TableDataWriter(CheckpointManager &manager, TableCatalogEntry &table);
-	~TableDataWriter();
+	explicit TableDataWriter(TableCatalogEntry &table);
+	virtual ~TableDataWriter();
 
-	void WriteTableData(Transaction &transaction);
+public:
+	void WriteTableData(Serializer &metadata_serializer);
+
+	CompressionType GetColumnCompressionType(idx_t i);
+
+	virtual void FinalizeTable(TableStatistics &&global_stats, DataTableInfo *info,
+	                           Serializer &metadata_serializer) = 0;
+	virtual unique_ptr<RowGroupWriter> GetRowGroupWriter(RowGroup &row_group) = 0;
+
+	virtual void AddRowGroup(RowGroupPointer &&row_group_pointer, unique_ptr<RowGroupWriter> &&writer);
+
+protected:
+	DuckTableEntry &table;
+	// Pointers to the start of each row group.
+	vector<RowGroupPointer> row_group_pointers;
+};
+
+class SingleFileTableDataWriter : public TableDataWriter {
+public:
+	SingleFileTableDataWriter(SingleFileCheckpointWriter &checkpoint_manager, TableCatalogEntry &table,
+	                          MetadataWriter &table_data_writer);
+
+public:
+	virtual void FinalizeTable(TableStatistics &&global_stats, DataTableInfo *info,
+	                           Serializer &metadata_serializer) override;
+	virtual unique_ptr<RowGroupWriter> GetRowGroupWriter(RowGroup &row_group) override;
 
 private:
-	void AppendData(Transaction &transaction, idx_t col_idx, Vector &data, idx_t count);
-
-	void CreateSegment(idx_t col_idx);
-	void FlushSegment(Transaction &transaction, idx_t col_idx);
-
-	void WriteDataPointers();
-	void VerifyDataPointers();
-
-private:
-	CheckpointManager &manager;
-	TableCatalogEntry &table;
-
-	vector<unique_ptr<UncompressedSegment>> segments;
-	vector<unique_ptr<SegmentStatistics>> stats;
-
-	vector<vector<DataPointer>> data_pointers;
+	SingleFileCheckpointWriter &checkpoint_manager;
+	// Writes the actual table data
+	MetadataWriter &table_data_writer;
 };
 
 } // namespace duckdb

@@ -13,23 +13,31 @@
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
+#include "duckdb/catalog/catalog_entry/column_dependency_manager.hpp"
+#include "duckdb/parser/column_list.hpp"
 
 namespace duckdb {
+class SchemaCatalogEntry;
 
 struct CreateTableInfo : public CreateInfo {
-	CreateTableInfo() : CreateInfo(CatalogType::TABLE, INVALID_SCHEMA) {
-	}
-	CreateTableInfo(string schema, string name) : CreateInfo(CatalogType::TABLE, schema), table(name) {
-	}
+	DUCKDB_API CreateTableInfo();
+	DUCKDB_API CreateTableInfo(string catalog, string schema, string name);
+	DUCKDB_API CreateTableInfo(SchemaCatalogEntry &schema, string name);
 
 	//! Table name to insert to
 	string table;
 	//! List of columns of the table
-	vector<ColumnDefinition> columns;
+	ColumnList columns;
 	//! List of constraints on the table
 	vector<unique_ptr<Constraint>> constraints;
 	//! CREATE TABLE from QUERY
 	unique_ptr<SelectStatement> query;
+
+public:
+	DUCKDB_API unique_ptr<CreateInfo> Copy() const override;
+
+	DUCKDB_API void Serialize(Serializer &serializer) const override;
+	DUCKDB_API static unique_ptr<CreateInfo> Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

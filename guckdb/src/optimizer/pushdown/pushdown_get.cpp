@@ -1,135 +1,80 @@
 #include "duckdb/optimizer/filter_pushdown.hpp"
+#include "duckdb/optimizer/optimizer.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
-#include "duckdb/storage/data_table.hpp"
-using namespace duckdb;
-using namespace std;
+
+namespace duckdb {
 
 unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperator> op) {
-	assert(op->type == LogicalOperatorType::GET);
-	auto &get = (LogicalGet &)*op;
-	if (!get.tableFilters.empty()) {
-		if (!filters.empty()) {
-			//! We didn't managed to push down all filters to table scan
-			auto logicalFilter = make_unique<LogicalFilter>();
-			for (auto &f : filters) {
-				logicalFilter->expressions.push_back(move(f->filter));
+	D_ASSERT(op->type == LogicalOperatorType::LOGICAL_GET);
+	auto &get = op->Cast<LogicalGet>();
+
+	if (get.function.pushdown_complex_filter || get.function.filter_pushdown) {
+		// this scan supports some form of filter push-down
+		// check if there are any parameters
+		// if there are, invalidate them to force a re-bind on execution
+		for (auto &filter : filters) {
+			if (filter->filter->HasParameter()) {
+				// there is a parameter in the filters! invalidate it
+				BoundParameterExpression::InvalidateRecursive(*filter->filter);
 			}
-			logicalFilter->children.push_back(move(op));
-			return move(logicalFilter);
-		} else {
-			return op;
 		}
 	}
-	//! FIXME: We only need to skip if the index is in the column being filtered
-	if (!get.table || !get.table->storage->info->indexes.empty()) {
-        bool possible = false;
-        for (int i = 0; i < get.table->storage->info->indexes.size(); ++i) {
-            for (int j = 0; j < filters.size(); ++j) {
-                int bound_id = get.table->storage->info->indexes[i]->column_ids[0];
-                if (filters[j]->filter->type == ExpressionType::COMPARE_BETWEEN) {
-                    BoundBetweenExpression* expr = (BoundBetweenExpression*) filters[j]->filter.get();
-                    if (expr->input->alias == get.table->columns[bound_id].name) {
-                        possible = true;
-                        break;
-                    }
-                }
-                else if (filters[j]->filter->type == ExpressionType::COMPARE_LESSTHANOREQUALTO ||
-                        filters[j]->filter->type == ExpressionType::COMPARE_LESSTHAN ||
-                        filters[j]->filter->type == ExpressionType::COMPARE_GREATERTHAN ||
-                        filters[j]->filter->type == ExpressionType::COMPARE_GREATERTHANOREQUALTO ||
-                        filters[j]->filter->type == ExpressionType::COMPARE_EQUAL ||
-                        filters[j]->filter->type == ExpressionType::COMPARE_NOTEQUAL) {
-                    BoundComparisonExpression* expr = (BoundComparisonExpression*) filters[j]->filter.get();
-                    if (expr->left->type == ExpressionType::BOUND_COLUMN_REF) {
-                        if (expr->left->alias == get.table->columns[bound_id].name) {
-                            possible = true;
-                            break;
-                        }
-                    }
-                    if (expr->right->type == ExpressionType::BOUND_COLUMN_REF) {
-                        if (expr->right->alias == get.table->columns[bound_id].name) {
-                            possible = true;
-                            break;
-                        }
-                    }
-                }
-                else if (filters[j]->filter->type == ExpressionType::OPERATOR_IS_NULL) {
-                    BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
-                    for (int k = 0; k < expr->children.size(); ++k) {
-                        if (expr->children[k]->alias == get.table->columns[bound_id].name) {
-                            possible = true;
-                            break;
-                        }
-                    }
-                    if (possible)
-                        break;
-                }
-                else if (filters[j]->filter->type == ExpressionType::COMPARE_IN) {
-                    BoundOperatorExpression* expr = (BoundOperatorExpression*) filters[j]->filter.get();
-                    for (int k = 0; k < expr->children.size(); ++k) {
-                        if (expr->children[k]->type == ExpressionType::BOUND_COLUMN_REF) {
-                            if (expr->children[k]->alias == get.table->columns[bound_id].name) {
-                                possible = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (possible)
-                        break;
-                }
-                else {
-                    std::cout << "Unsolved Expression Type in Pushdown Get" << std::endl;
-                    possible = true;
-                    break;
-                }
-            }
-            if (possible)
-                break;
-        }
+	if (get.function.pushdown_complex_filter) {
+		// for the remaining filters, check if we can push any of them into the scan as well
+		vector<unique_ptr<Expression>> expressions;
+		expressions.reserve(filters.size());
+		for (auto &filter : filters) {
+			expressions.push_back(std::move(filter->filter));
+		}
+		filters.clear();
 
-        if (possible || filters.empty()) {
-            //! now push any existing filters
-            if (filters.empty()) {
-                //! no filters to push
-                return op;
-            }
-            auto filter = make_unique<LogicalFilter>();
-            for (auto &f: filters) {
-                filter->expressions.push_back(move(f->filter));
-            }
-            filter->children.push_back(move(op));
-            return move(filter);
-        }
+		get.function.pushdown_complex_filter(optimizer.context, get, get.bind_data.get(), expressions);
+
+		if (expressions.empty()) {
+			return op;
+		}
+		// re-generate the filters
+		for (auto &expr : expressions) {
+			auto f = make_uniq<Filter>();
+			f->filter = std::move(expr);
+			f->ExtractBindings();
+			filters.push_back(std::move(f));
+		}
+	}
+
+	if (!get.table_filters.filters.empty() || !get.function.filter_pushdown) {
+		// the table function does not support filter pushdown: push a LogicalFilter on top
+		return FinishPushdown(std::move(op));
 	}
 	PushFilters();
 
-	vector<unique_ptr<Filter>> filtersToPushDown;
-	get.tableFilters = combiner.GenerateTableScanFilters(
-	    [&](unique_ptr<Expression> filter) {
-		    auto f = make_unique<Filter>();
-		    f->filter = move(filter);
-		    f->ExtractBindings();
-		    filtersToPushDown.push_back(move(f));
-	    },
-	    get.column_ids);
-	for (auto &f : get.tableFilters) {
-		f.column_index = get.column_ids[f.column_index];
-	}
+	//! We generate the table filters that will be executed during the table scan
+	//! Right now this only executes simple AND filters
+	get.table_filters = combiner.GenerateTableScanFilters(get.column_ids);
+
+	// //! For more complex filters if all filters to a column are constants we generate a min max boundary used to
+	// check
+	// //! the zonemaps.
+	// auto zonemap_checks = combiner.GenerateZonemapChecks(get.column_ids, get.table_filters);
+
+	// for (auto &f : get.table_filters) {
+	// 	f.column_index = get.column_ids[f.column_index];
+	// }
+
+	// //! Use zonemap checks as table filters for pre-processing
+	// for (auto &zonemap_check : zonemap_checks) {
+	// 	if (zonemap_check.column_index != COLUMN_IDENTIFIER_ROW_ID) {
+	// 		get.table_filters.push_back(zonemap_check);
+	// 	}
+	// }
 
 	GenerateFilters();
-	for (auto &f : filtersToPushDown) {
-		get.expressions.push_back(move(f->filter));
-	}
 
-	if (!filters.empty()) {
-		//! We didn't managed to push down all filters to table scan
-		auto logicalFilter = make_unique<LogicalFilter>();
-		for (auto &f : filters) {
-			logicalFilter->expressions.push_back(move(f->filter));
-		}
-		logicalFilter->children.push_back(move(op));
-		return move(logicalFilter);
-	}
-	return op;
+	//! Now we try to pushdown the remaining filters to perform zonemap checking
+	return FinishPushdown(std::move(op));
 }
+
+} // namespace duckdb

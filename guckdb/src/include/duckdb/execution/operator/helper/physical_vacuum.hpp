@@ -8,43 +8,47 @@
 
 #pragma once
 
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 
 namespace duckdb {
 
-//! PhysicalVacuum represents a VACUUM operation (e.g. VACUUM or ANALYZE)
+//! PhysicalVacuum represents a VACUUM operation (i.e. VACUUM or ANALYZE)
 class PhysicalVacuum : public PhysicalOperator {
 public:
-	PhysicalVacuum(unique_ptr<VacuumInfo> info)
-	    : PhysicalOperator(PhysicalOperatorType::VACUUM, {TypeId::BOOL}), info(move(info)) {
-	}
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::VACUUM;
+
+public:
+	PhysicalVacuum(unique_ptr<VacuumInfo> info, idx_t estimated_cardinality);
 
 	unique_ptr<VacuumInfo> info;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
-};
+	// Source interface
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
 
-/* ----------------------
- *		Vacuum and Analyze Statements
- *
- * Even though these are nominally two statements, it's convenient to use
- * just one node type for both.  Note that at least one of PG_VACOPT_VACUUM
- * and PG_VACOPT_ANALYZE must be set in options.
- * ----------------------
- */
-typedef enum PGVacuumOption {
-	PG_VACOPT_VACUUM = 1 << 0,               /* do VACUUM */
-	PG_VACOPT_ANALYZE = 1 << 1,              /* do ANALYZE */
-	PG_VACOPT_VERBOSE = 1 << 2,              /* print progress info */
-	PG_VACOPT_FREEZE = 1 << 3,               /* FREEZE option */
-	PG_VACOPT_FULL = 1 << 4,                 /* FULL (non-concurrent) vacuum */
-	PG_VACOPT_NOWAIT = 1 << 5,               /* don't wait to get lock (autovacuum only) */
-	PG_VACOPT_SKIPTOAST = 1 << 6,            /* don't process the TOAST table, if any */
-	PG_VACOPT_DISABLE_PAGE_SKIPPING = 1 << 7 /* don't skip any pages */
-} PGVacuumOption;
+	bool IsSource() const override {
+		return true;
+	}
+
+public:
+	// Sink interface
+	unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
+	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
+
+	SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const override;
+	SinkCombineResultType Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const override;
+	SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+	                          OperatorSinkFinalizeInput &input) const override;
+
+	bool IsSink() const override {
+		return info->has_table;
+	}
+
+	bool ParallelSink() const override {
+		return IsSink();
+	}
+};
 
 } // namespace duckdb

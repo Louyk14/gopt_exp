@@ -18,22 +18,44 @@ namespace duckdb {
 //! the data but only add a selection vector.
 class PhysicalTopN : public PhysicalOperator {
 public:
-	PhysicalTopN(LogicalOperator &op, vector<BoundOrderByNode> orders, idx_t limit, idx_t offset)
-	    : PhysicalOperator(PhysicalOperatorType::TOP_N, op.types), orders(move(orders)), limit(limit), offset(offset),
-	      heap_size(0) {
-	}
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::TOP_N;
+
+public:
+	PhysicalTopN(vector<LogicalType> types, vector<BoundOrderByNode> orders, idx_t limit, idx_t offset,
+	             idx_t estimated_cardinality);
 
 	vector<BoundOrderByNode> orders;
 	idx_t limit;
 	idx_t offset;
-	idx_t heap_size;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
-	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
-	void CalculateHeapSize(idx_t rows);
+	// Source interface
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+
+	bool IsSource() const override {
+		return true;
+	}
+	OrderPreservationType SourceOrder() const override {
+		return OrderPreservationType::FIXED_ORDER;
+	}
+
+public:
+	SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const override;
+	SinkCombineResultType Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const override;
+	SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+	                          OperatorSinkFinalizeInput &input) const override;
+	unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
+	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
+
+	bool IsSink() const override {
+		return true;
+	}
+	bool ParallelSink() const override {
+		return true;
+	}
+
+	string ParamsToString() const override;
     substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const override;
 };
 

@@ -2,9 +2,10 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/tableref/bound_basetableref.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 unique_ptr<LogicalOperator> Binder::CreatePlan(BoundBaseTableRef &ref) {
-	return move(ref.get);
+	return std::move(ref.get);
 }
+
+} // namespace duckdb

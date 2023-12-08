@@ -16,6 +16,9 @@ namespace duckdb {
 
 class RecursiveCTENode : public QueryNode {
 public:
+	static constexpr const QueryNodeType TYPE = QueryNodeType::RECURSIVE_CTE_NODE;
+
+public:
 	RecursiveCTENode() : QueryNode(QueryNodeType::RECURSIVE_CTE_NODE) {
 	}
 
@@ -25,20 +28,26 @@ public:
 	unique_ptr<QueryNode> left;
 	//! The right side of the set operation
 	unique_ptr<QueryNode> right;
+	//! Aliases of the recursive CTE node
+	vector<string> aliases;
 
 	const vector<unique_ptr<ParsedExpression>> &GetSelectList() const override {
 		return left->GetSelectList();
 	}
 
 public:
+	//! Convert the query node to a string
+	string ToString() const override;
+
 	bool Equals(const QueryNode *other) const override;
 	//! Create a copy of this SelectNode
-	unique_ptr<QueryNode> Copy() override;
+	unique_ptr<QueryNode> Copy() const override;
 
-	//! Serializes a SelectNode to a stand-alone binary blob
-	void Serialize(Serializer &serializer) override;
-	//! Deserializes a blob back into a SelectNode
+	//! Serializes a QueryNode to a stand-alone binary blob
+	//! Deserializes a blob back into a QueryNode
+
+	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<QueryNode> Deserialize(Deserializer &source);
 };
 
-}; // namespace duckdb
+} // namespace duckdb

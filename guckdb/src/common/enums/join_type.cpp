@@ -1,154 +1,19 @@
 #include "duckdb/common/enums/join_type.hpp"
-
-using namespace std;
+#include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
 
+bool IsLeftOuterJoin(JoinType type) {
+	return type == JoinType::LEFT || type == JoinType::OUTER;
+}
+
+bool IsRightOuterJoin(JoinType type) {
+	return type == JoinType::OUTER || type == JoinType::RIGHT;
+}
+
+// **DEPRECATED**: Use EnumUtil directly instead.
 string JoinTypeToString(JoinType type) {
-	switch (type) {
-	case JoinType::LEFT:
-		return "LEFT";
-	case JoinType::RIGHT:
-		return "RIGHT";
-	case JoinType::INNER:
-		return "INNER";
-	case JoinType::OUTER:
-		return "OUTER";
-	case JoinType::SEMI:
-		return "SEMI";
-	case JoinType::ANTI:
-		return "ANTI";
-	case JoinType::SINGLE:
-		return "SINGLE";
-	case JoinType::MARK:
-		return "MARK";
-	case JoinType::INVALID:
-	default:
-		return "INVALID";
-	}
-}
-
-substrait::HashJoinRel_JoinType JoinTypeToSubstraitHashJoinType(JoinType type) {
-    if (type == JoinType::INNER)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_INNER;
-    else if (type == JoinType::SINGLE)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_SINGLE;
-    else if (type == JoinType::ANTI)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI;
-    else if (type == JoinType::LEFT)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT;
-    else if (type == JoinType::RIGHT)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_RIGHT;
-    else if (type == JoinType::SEMI)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI;
-    else if (type == JoinType::MARK)
-        return substrait::HashJoinRel_JoinType_JOIN_TYPE_MARK;
-    else {
-        std::cout << "unsupported join type" << std::endl;
-    }
-}
-
-JoinType SubstraitHashJoinTypeToJoinType(substrait::HashJoinRel_JoinType type) {
-    if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_INNER)
-        return JoinType::INNER;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_SINGLE)
-        return JoinType::SINGLE;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI)
-        return JoinType::ANTI;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT)
-        return JoinType::LEFT;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_RIGHT)
-        return JoinType::RIGHT;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI)
-        return JoinType::SEMI;
-    else if (type == substrait::HashJoinRel_JoinType_JOIN_TYPE_MARK)
-        return JoinType::MARK;
-    else
-        std::cout << "unsuppored hash join type in protobuf_serializer.cpp" << std::endl;
-
-    return JoinType::INVALID;
-}
-
-substrait::SIPJoinRel_JoinType JoinTypeToSubstraitSIPJoinType(JoinType type) {
-    if (type == JoinType::INNER)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_INNER;
-    else if (type == JoinType::SINGLE)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_SINGLE;
-    else if (type == JoinType::ANTI)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI;
-    else if (type == JoinType::LEFT)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT;
-    else if (type == JoinType::RIGHT)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_RIGHT;
-    else if (type == JoinType::SEMI)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI;
-    else if (type == JoinType::MARK)
-        return substrait::SIPJoinRel_JoinType_JOIN_TYPE_MARK;
-    else {
-        std::cout << "unsupported join type" << std::endl;
-    }
-}
-
-JoinType SubstraitSIPJoinTypeToJoinType(substrait::SIPJoinRel_JoinType type) {
-    if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_INNER)
-        return JoinType::INNER;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_SINGLE)
-        return JoinType::SINGLE;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI)
-        return JoinType::ANTI;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT)
-        return JoinType::LEFT;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_RIGHT)
-        return JoinType::RIGHT;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI)
-        return JoinType::SEMI;
-    else if (type == substrait::SIPJoinRel_JoinType_JOIN_TYPE_MARK)
-        return JoinType::MARK;
-    else
-        std::cout << "unsuppored sip join type in protobuf_serializer.cpp" << std::endl;
-
-    return JoinType::INVALID;
-}
-
-substrait::MergeSIPJoinRel_JoinType JoinTypeToSubstraitMergeSIPJoinType(JoinType type) {
-    if (type == JoinType::INNER)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_INNER;
-    else if (type == JoinType::SINGLE)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_SINGLE;
-    else if (type == JoinType::ANTI)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI;
-    else if (type == JoinType::LEFT)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT;
-    else if (type == JoinType::RIGHT)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT;
-    else if (type == JoinType::SEMI)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI;
-    else if (type == JoinType::MARK)
-        return substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_MARK;
-    else {
-        std::cout << "unsupported join type" << std::endl;
-    }
-}
-
-JoinType SubstraitMergeSIPJoinTypeToJoinType(substrait::MergeSIPJoinRel_JoinType type) {
-    if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_INNER)
-        return JoinType::INNER;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_SINGLE)
-        return JoinType::SINGLE;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_ANTI)
-        return JoinType::ANTI;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT)
-        return JoinType::LEFT;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_RIGHT)
-        return JoinType::RIGHT;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_LEFT_SEMI)
-        return JoinType::SEMI;
-    else if (type == substrait::MergeSIPJoinRel_JoinType_JOIN_TYPE_MARK)
-        return JoinType::MARK;
-    else
-        std::cout << "unsuppored merge sip join type in protobuf_serializer.cpp" << std::endl;
-
-    return JoinType::INVALID;
+	return EnumUtil::ToString(type);
 }
 
 } // namespace duckdb

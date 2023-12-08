@@ -1,13 +1,14 @@
 #include "duckdb/function/scalar/nested_functions.hpp"
 
-using namespace std;
-
 namespace duckdb {
 
 void BuiltinFunctions::RegisterNestedFunctions() {
-	Register<StructPackFun>();
 	Register<StructExtractFun>();
-	Register<ListValueFun>();
+	Register<ListConcatFun>();
+	Register<ListContainsFun>();
+	Register<ListPositionFun>();
+	Register<ListExtractFun>();
+	Register<ListResizeFun>();
 }
 
 } // namespace duckdb

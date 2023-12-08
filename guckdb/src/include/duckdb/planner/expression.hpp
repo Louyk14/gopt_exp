@@ -9,16 +9,22 @@
 #pragma once
 
 #include "duckdb/parser/base_expression.hpp"
-#include "duckdb/protocode/algebra.pb.h"
+#include "duckdb/common/types.hpp"
 
 namespace duckdb {
+class BaseStatistics;
+class ClientContext;
+
 //!  The Expression class represents a bound Expression with a return type
 class Expression : public BaseExpression {
 public:
-	Expression(ExpressionType type, ExpressionClass expression_class, TypeId return_type);
+	Expression(ExpressionType type, ExpressionClass expression_class, LogicalType return_type);
+	~Expression() override;
 
 	//! The return type of the expression
-	TypeId return_type;
+	LogicalType return_type;
+	//! Expression statistics (if any) - ONLY USED FOR VERIFICATION
+	unique_ptr<BaseStatistics> verification_stats;
 
 public:
 	bool IsAggregate() const override;
@@ -26,18 +32,28 @@ public:
 	bool HasSubquery() const override;
 	bool IsScalar() const override;
 	bool HasParameter() const override;
+	virtual bool HasSideEffects() const;
+	virtual bool PropagatesNullValues() const;
 	virtual bool IsFoldable() const;
 
 	hash_t Hash() const override;
 
-	static bool Equals(Expression *left, Expression *right) {
-		return BaseExpression::Equals((BaseExpression *)left, (BaseExpression *)right);
+	bool Equals(const BaseExpression &other) const override {
+		if (!BaseExpression::Equals(other)) {
+			return false;
+		}
+		return return_type == ((Expression &)other).return_type;
 	}
+	static bool Equals(const Expression &left, const Expression &right) {
+		return left.Equals(right);
+	}
+	static bool Equals(const unique_ptr<Expression> &left, const unique_ptr<Expression> &right);
+	static bool ListEquals(const vector<unique_ptr<Expression>> &left, const vector<unique_ptr<Expression>> &right);
 	//! Create a copy of this expression
 	virtual unique_ptr<Expression> Copy() = 0;
-    virtual substrait::AggregateFunction* ToAggregateFunction() const {
-        return new substrait::AggregateFunction();
-    }
+
+	virtual void Serialize(Serializer &serializer) const;
+	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 
 protected:
 	//! Copy base Expression properties from another expression to this one,

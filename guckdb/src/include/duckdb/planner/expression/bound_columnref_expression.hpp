@@ -13,14 +13,16 @@
 
 namespace duckdb {
 
-//! A BoundColumnRef expression represents a ColumnRef expression that was bound to an actual table and column index (or
-//! rai and rai column). It is not yet executable, however. The ColumnBindingResolver transforms the
-//! BoundColumnRefExpressions into BoundExpressions, which refer to indexes into the physical chunks that pass through
-//! the executor.
+//! A BoundColumnRef expression represents a ColumnRef expression that was bound to an actual table and column index. It
+//! is not yet executable, however. The ColumnBindingResolver transforms the BoundColumnRefExpressions into
+//! BoundExpressions, which refer to indexes into the physical chunks that pass through the executor.
 class BoundColumnRefExpression : public Expression {
 public:
-	BoundColumnRefExpression(TypeId type, ColumnBinding binding, idx_t depth = 0);
-	BoundColumnRefExpression(string alias, TypeId type, ColumnBinding binding, idx_t depth = 0);
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_COLUMN_REF;
+
+public:
+	BoundColumnRefExpression(LogicalType type, ColumnBinding binding, idx_t depth = 0);
+	BoundColumnRefExpression(string alias, LogicalType type, ColumnBinding binding, idx_t depth = 0);
 
 	//! Column index set by the binder, used to generate the final BoundExpression
 	ColumnBinding binding;
@@ -37,10 +39,14 @@ public:
 	}
 
 	string ToString() const override;
+	string GetName() const override;
 
-	bool Equals(const BaseExpression *other) const override;
+	bool Equals(const BaseExpression &other) const override;
 	hash_t Hash() const override;
 
 	unique_ptr<Expression> Copy() override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 };
 } // namespace duckdb

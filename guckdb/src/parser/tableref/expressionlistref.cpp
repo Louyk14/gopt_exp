@@ -1,24 +1,45 @@
 #include "duckdb/parser/tableref/expressionlistref.hpp"
 
-#include "duckdb/common/serializer.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-bool ExpressionListRef::Equals(const TableRef *other_) const {
-	if (!TableRef::Equals(other_)) {
+string ExpressionListRef::ToString() const {
+	D_ASSERT(!values.empty());
+	string result = "(VALUES ";
+	for (idx_t row_idx = 0; row_idx < values.size(); row_idx++) {
+		if (row_idx > 0) {
+			result += ", ";
+		}
+		auto &row = values[row_idx];
+		result += "(";
+		for (idx_t col_idx = 0; col_idx < row.size(); col_idx++) {
+			if (col_idx > 0) {
+				result += ", ";
+			}
+			result += row[col_idx]->ToString();
+		}
+		result += ")";
+	}
+	result += ")";
+	return BaseToString(result, expected_names);
+}
+
+bool ExpressionListRef::Equals(const TableRef &other_p) const {
+	if (!TableRef::Equals(other_p)) {
 		return false;
 	}
-	auto other = (ExpressionListRef *)other_;
-	if (values.size() != other->values.size()) {
+	auto &other = other_p.Cast<ExpressionListRef>();
+	if (values.size() != other.values.size()) {
 		return false;
 	}
 	for (idx_t i = 0; i < values.size(); i++) {
-		if (values[i].size() != other->values[i].size()) {
+		if (values[i].size() != other.values[i].size()) {
 			return false;
 		}
 		for (idx_t j = 0; j < values[i].size(); j++) {
-			if (!values[i][j]->Equals(other->values[i][j].get())) {
+			if (!values[i][j]->Equals(*other.values[i][j])) {
 				return false;
 			}
 		}
@@ -28,52 +49,19 @@ bool ExpressionListRef::Equals(const TableRef *other_) const {
 
 unique_ptr<TableRef> ExpressionListRef::Copy() {
 	// value list
-	auto result = make_unique<ExpressionListRef>();
+	auto result = make_uniq<ExpressionListRef>();
 	for (auto &val_list : values) {
 		vector<unique_ptr<ParsedExpression>> new_val_list;
+		new_val_list.reserve(val_list.size());
 		for (auto &val : val_list) {
 			new_val_list.push_back(val->Copy());
 		}
-		result->values.push_back(move(new_val_list));
+		result->values.push_back(std::move(new_val_list));
 	}
 	result->expected_names = expected_names;
 	result->expected_types = expected_types;
-	result->alias = alias;
-	return move(result);
+	CopyProperties(*result);
+	return std::move(result);
 }
 
-void ExpressionListRef::Serialize(Serializer &serializer) {
-	TableRef::Serialize(serializer);
-	serializer.Write<idx_t>(expected_names.size());
-	for (idx_t i = 0; i < expected_names.size(); i++) {
-		serializer.WriteString(expected_names[i]);
-	}
-	serializer.Write<idx_t>(expected_types.size());
-	for (idx_t i = 0; i < expected_types.size(); i++) {
-		expected_types[i].Serialize(serializer);
-	}
-	serializer.Write<idx_t>(values.size());
-	for (idx_t i = 0; i < values.size(); i++) {
-		serializer.WriteList(values[i]);
-	}
-}
-
-unique_ptr<TableRef> ExpressionListRef::Deserialize(Deserializer &source) {
-	auto result = make_unique<ExpressionListRef>();
-	// value list
-	auto name_count = source.Read<idx_t>();
-	for (idx_t i = 0; i < name_count; i++) {
-		result->expected_names.push_back(source.Read<string>());
-	}
-	auto type_count = source.Read<idx_t>();
-	for (idx_t i = 0; i < type_count; i++) {
-		result->expected_types.push_back(SQLType::Deserialize(source));
-	}
-	idx_t value_list_size = source.Read<idx_t>();
-	for (idx_t i = 0; i < value_list_size; i++) {
-		vector<unique_ptr<ParsedExpression>> value_list;
-		source.ReadList<ParsedExpression>(value_list);
-		result->values.push_back(move(value_list));
-	}
-	return move(result);
-}
+} // namespace duckdb

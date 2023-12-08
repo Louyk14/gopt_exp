@@ -4,20 +4,20 @@ using namespace duckdb;
 using namespace std;
 
 void AList::AppendPKFK(Vector &source, Vector &edges, idx_t count, RAIDirection direction) {
-	VectorData source_data, edges_data;
-	source.Orrify(count, source_data);
-	edges.Orrify(count, edges_data);
-	auto source_ids = (int64_t *)source_data.data;
-	auto edge_ids = (int64_t *)edges_data.data;
+    UnifiedVectorFormat source_data, edges_data;
+	source.ToUnifiedFormat(count, source_data);
+	edges.ToUnifiedFormat(count, edges_data);
+	auto source_ids = UnifiedVectorFormat::GetData<hash_t>(source_data);
+	auto edge_ids = UnifiedVectorFormat::GetData<hash_t>(edges_data);
 	for (idx_t i = 0; i < count; i++) {
 		auto source_idx = source_data.sel->get_index(i);
-		if ((*source_data.nullmask)[source_idx]) {
+		if (!source_data.validity.RowIsValid(source_idx)) {
 			continue;
 		}
 		auto source_rid = source_ids[source_idx];
 		auto edge_rid = edge_ids[edges_data.sel->get_index(i)];
 		if (forward_map.find(source_rid) == forward_map.end()) {
-			auto elist = make_unique<EList>();
+			auto elist = make_uniq<EList>();
 			forward_map[source_rid] = move(elist);
 		}
 		forward_map[source_rid]->edges->push_back(edge_rid);
@@ -27,24 +27,24 @@ void AList::AppendPKFK(Vector &source, Vector &edges, idx_t count, RAIDirection 
 }
 
 void AList::Append(Vector &source, Vector &edges, Vector &target, idx_t count, RAIDirection direction) {
-	VectorData source_data{}, edges_data{}, target_data{};
-	source.Orrify(count, source_data);
-	edges.Orrify(count, edges_data);
-	target.Orrify(count, target_data);
-	auto source_ids = (int64_t *)source_data.data;
-	auto edge_ids = (int64_t *)edges_data.data;
-	auto target_ids = (int64_t *)target_data.data;
+    UnifiedVectorFormat source_data{}, edges_data{}, target_data{};
+	source.ToUnifiedFormat(count, source_data);
+	edges.ToUnifiedFormat(count, edges_data);
+	target.ToUnifiedFormat(count, target_data);
+	auto source_ids = UnifiedVectorFormat::GetData<hash_t>(source_data);
+	auto edge_ids = UnifiedVectorFormat::GetData<hash_t>(edges_data);
+	auto target_ids = UnifiedVectorFormat::GetData<hash_t>(target_data);
 	for (idx_t i = 0; i < count; i++) {
 		auto source_idx = source_data.sel->get_index(i);
 		auto target_idx = target_data.sel->get_index(i);
-		if ((*source_data.nullmask)[source_idx] || (*target_data.nullmask)[target_idx]) {
+		if (!source_data.validity.RowIsValid(source_idx) || !target_data.validity.RowIsValid(target_idx)) {
 			continue;
 		}
 		auto source_rid = source_ids[source_idx];
 		auto edge_rid = edge_ids[edges_data.sel->get_index(i)];
 		auto target_rid = target_ids[target_idx];
 		if (forward_map.find(source_rid) == forward_map.end()) {
-			auto elist = make_unique<EList>();
+			auto elist = make_uniq<EList>();
 			forward_map[source_rid] = move(elist);
 		}
 		forward_map[source_rid]->edges->push_back(edge_rid);
@@ -55,14 +55,14 @@ void AList::Append(Vector &source, Vector &edges, Vector &target, idx_t count, R
 		for (idx_t i = 0; i < count; i++) {
 			auto source_idx = source_data.sel->get_index(i);
 			auto target_idx = target_data.sel->get_index(i);
-			if ((*source_data.nullmask)[source_idx] || (*target_data.nullmask)[target_idx]) {
+			if (!source_data.validity.RowIsValid(source_idx) || !target_data.validity.RowIsValid(target_idx)) {
 				continue;
 			}
 			auto source_rid = source_ids[source_idx];
 			auto edge_rid = edge_ids[edges_data.sel->get_index(i)];
 			auto target_rid = target_ids[target_idx];
 			if (backward_map.find(target_rid) == backward_map.end()) {
-				auto elist = make_unique<EList>();
+				auto elist = make_uniq<EList>();
 				backward_map[target_rid] = move(elist);
 			}
 			backward_map[target_rid]->edges->push_back(edge_rid);
@@ -152,19 +152,19 @@ static idx_t FetchInternal(CompactList &alist, idx_t &lpos, idx_t &rpos, Vector 
 		return 0;
 	}
 
-	r0vector.vector_type = VectorType::FLAT_VECTOR;
-	r1vector.vector_type = VectorType::FLAT_VECTOR;
-	VectorData right_data;
-	rvector.Orrify(rsize, right_data);
-	auto rdata = (int64_t *)right_data.data;
+	r0vector.SetVectorType(VectorType::FLAT_VECTOR);
+	r1vector.SetVectorType(VectorType::FLAT_VECTOR);
+    UnifiedVectorFormat right_data;
+	rvector.ToUnifiedFormat(rsize, right_data);
+	auto rdata = UnifiedVectorFormat::GetData<hash_t>(right_data);
 	auto r0data = (int64_t *)FlatVector::GetData(r0vector);
 	auto r1data = (int64_t *)FlatVector::GetData(r1vector);
 	idx_t result_count = 0;
 
-	if (right_data.nullmask->any()) {
+    if (!right_data.validity.AllValid()) {
 		while (rpos < rsize) {
 			idx_t right_position = right_data.sel->get_index(rpos);
-			if ((*right_data.nullmask)[right_position]) {
+			if (!right_data.validity.RowIsValid(right_position)) {
 				continue;
 			}
 			auto rid = rdata[right_position];
@@ -213,21 +213,21 @@ static idx_t FetchInternal(CompactList &alist, idx_t &lpos, idx_t &rpos, Vector 
 
 static idx_t FetchVertexesInternal(CompactList &alist, idx_t &lpos, idx_t &rpos, Vector &rvector, idx_t rsize,
                                    SelectionVector &rsel, Vector &r0vector) {
-	assert(r0vector.vector_type == VectorType::FLAT_VECTOR);
+	assert(r0vector.GetVectorType() == VectorType::FLAT_VECTOR);
 	if (rpos >= rsize) {
 		return 0;
 	}
 
-	VectorData right_data;
-	rvector.Orrify(rsize, right_data);
+    UnifiedVectorFormat right_data;
+	rvector.ToUnifiedFormat(rsize, right_data);
 	auto rdata = (int64_t *)right_data.data;
 	auto r0data = (int64_t *)FlatVector::GetData(r0vector);
 	idx_t result_count = 0;
 
-	if (right_data.nullmask->any()) {
-		while (rpos < rsize) {
+    if (!right_data.validity.AllValid()) {
+        while (rpos < rsize) {
 			idx_t right_position = right_data.sel->get_index(rpos);
-			if ((*right_data.nullmask)[right_position]) {
+			if (!right_data.validity.RowIsValid(right_position)) {
 				continue;
 			}
 			auto rid = rdata[right_position];
@@ -354,7 +354,7 @@ idx_t AList::BuildZoneFilterWithExtra(data_ptr_t *hashmap, idx_t size, bitmask_v
 	return BuildZoneFilterWithExtraInternal(compact_backward_list, hashmap, size, zone_filter, extra_zone_filter);
 }
 
-static idx_t BuildRowsFilterInternal(CompactList &alist, data_ptr_t *hashmap, idx_t size, vector<row_t> &rows_filter) {
+static idx_t BuildRowsFilterInternal(CompactList &alist, data_ptr_t *hashmap, idx_t size, std::vector<row_t> &rows_filter) {
 	idx_t matched_count = 0;
 	for (idx_t i = 0; i < size; i++) {
 		if (*((data_ptr_t *)(hashmap + i))) {
@@ -368,7 +368,7 @@ static idx_t BuildRowsFilterInternal(CompactList &alist, data_ptr_t *hashmap, id
 	return matched_count;
 }
 
-idx_t AList::BuildRowsFilter(data_ptr_t *hashmap, idx_t size, vector<row_t> &rows_filter, bool forward) {
+idx_t AList::BuildRowsFilter(data_ptr_t *hashmap, idx_t size, std::vector<row_t> &rows_filter, bool forward) {
 	if (forward) {
 		return BuildRowsFilterInternal(compact_forward_list, hashmap, size, rows_filter);
 	}
@@ -376,7 +376,7 @@ idx_t AList::BuildRowsFilter(data_ptr_t *hashmap, idx_t size, vector<row_t> &row
 }
 
 static idx_t BuildRowsFilterWithExtraInternal(CompactList &alist, data_ptr_t *hashmap, idx_t size,
-                                              vector<row_t> &rows_filter, vector<row_t> &extra_rows_filter) {
+                                              std::vector<row_t> &rows_filter, std::vector<row_t> &extra_rows_filter) {
 	idx_t matched_count = 0;
 	idx_t extra_matched_count = 0;
 	for (idx_t i = 0; i < size; i++) {
@@ -391,12 +391,12 @@ static idx_t BuildRowsFilterWithExtraInternal(CompactList &alist, data_ptr_t *ha
 			}
 		}
 	}
-	assert(matched_count == extra_matched_count);
+    assert(matched_count == extra_matched_count);
 	return matched_count;
 }
 
-idx_t AList::BuildRowsFilterWithExtra(data_ptr_t *hashmap, idx_t size, vector<row_t> &rows_filter,
-                                      vector<row_t> &extra_rows_filter, bool forward) {
+idx_t AList::BuildRowsFilterWithExtra(data_ptr_t *hashmap, idx_t size, std::vector<row_t> &rows_filter,
+                                      std::vector<row_t> &extra_rows_filter, bool forward) {
 	if (forward) {
 		return BuildRowsFilterWithExtraInternal(compact_forward_list, hashmap, size, rows_filter, extra_rows_filter);
 	}

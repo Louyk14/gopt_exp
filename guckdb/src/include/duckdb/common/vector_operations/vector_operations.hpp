@@ -14,6 +14,8 @@
 #include <functional>
 
 namespace duckdb {
+class CastFunctionSet;
+struct GetCastFunctionInput;
 
 // VectorOperations contains a set of operations that operate on sets of
 // vectors. In general, the operators must all have the same type, otherwise an
@@ -26,65 +28,122 @@ struct VectorOperations {
 	//===--------------------------------------------------------------------===//
 	// In-Place Operators
 	//===--------------------------------------------------------------------===//
-	//! A += B
-	static void AddInPlace(Vector &A, int64_t B, idx_t count);
+	//! left += delta
+	static void AddInPlace(Vector &left, int64_t delta, idx_t count);
 
 	//===--------------------------------------------------------------------===//
 	// NULL Operators
 	//===--------------------------------------------------------------------===//
-	//! result = IS NOT NULL(A)
-	static void IsNotNull(Vector &A, Vector &result, idx_t count);
-	//! result = IS NULL (A)
-	static void IsNull(Vector &A, Vector &result, idx_t count);
-	// Returns whether or not a vector has a NULL value
-	static bool HasNull(Vector &A, idx_t count);
-	static bool HasNotNull(Vector &A, idx_t count);
+	//! result = IS NOT NULL(input)
+	static void IsNotNull(Vector &arg, Vector &result, idx_t count);
+	//! result = IS NULL (input)
+	static void IsNull(Vector &input, Vector &result, idx_t count);
+	// Returns whether or not arg vector has a NULL value
+	static bool HasNull(Vector &input, idx_t count);
+	static bool HasNotNull(Vector &input, idx_t count);
+	//! Count the number of not-NULL values.
+	static idx_t CountNotNull(Vector &input, const idx_t count);
 
 	//===--------------------------------------------------------------------===//
 	// Boolean Operations
 	//===--------------------------------------------------------------------===//
-	// result = A && B
-	static void And(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A || B
-	static void Or(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = NOT(A)
-	static void Not(Vector &A, Vector &result, idx_t count);
+	// result = left && right
+	static void And(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left || right
+	static void Or(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = NOT(left)
+	static void Not(Vector &left, Vector &result, idx_t count);
 
 	//===--------------------------------------------------------------------===//
 	// Comparison Operations
 	//===--------------------------------------------------------------------===//
-	// result = A == B
-	static void Equals(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A != B
-	static void NotEquals(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A > B
-	static void GreaterThan(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A >= B
-	static void GreaterThanEquals(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A < B
-	static void LessThan(Vector &A, Vector &B, Vector &result, idx_t count);
-	// result = A <= B
-	static void LessThanEquals(Vector &A, Vector &B, Vector &result, idx_t count);
+	// result = left == right
+	static void Equals(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left != right
+	static void NotEquals(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left > right
+	static void GreaterThan(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left >= right
+	static void GreaterThanEquals(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left < right
+	static void LessThan(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result = left <= right
+	static void LessThanEquals(Vector &left, Vector &right, Vector &result, idx_t count);
+
+	// result = A != B with nulls being equal
+	static void DistinctFrom(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result := A == B with nulls being equal
+	static void NotDistinctFrom(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result := A > B with nulls being maximal
+	static void DistinctGreaterThan(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result := A >= B with nulls being maximal
+	static void DistinctGreaterThanEquals(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result := A < B with nulls being maximal
+	static void DistinctLessThan(Vector &left, Vector &right, Vector &result, idx_t count);
+	// result := A <= B with nulls being maximal
+	static void DistinctLessThanEquals(Vector &left, Vector &right, Vector &result, idx_t count);
 
 	//===--------------------------------------------------------------------===//
-	// Scatter methods
+	// Select Comparisons
 	//===--------------------------------------------------------------------===//
-	// make sure dest.count is set for gather methods!
-	struct Gather {
-		//! dest.data[i] = ptr[i]. NullValue<T> is checked for and converted to the nullmask in dest. The source
-		//! addresses are incremented by the size of the type.
-		static void Set(Vector &source, Vector &dest, idx_t count);
-	};
+	static idx_t Equals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count, SelectionVector *true_sel,
+	                    SelectionVector *false_sel);
+	static idx_t NotEquals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                       SelectionVector *true_sel, SelectionVector *false_sel);
+	static idx_t GreaterThan(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                         SelectionVector *true_sel, SelectionVector *false_sel);
+	static idx_t GreaterThanEquals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                               SelectionVector *true_sel, SelectionVector *false_sel);
+	static idx_t LessThan(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                      SelectionVector *true_sel, SelectionVector *false_sel);
+	static idx_t LessThanEquals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                            SelectionVector *true_sel, SelectionVector *false_sel);
+
+	// true := A != B with nulls being equal
+	static idx_t DistinctFrom(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                          SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A == B with nulls being equal
+	static idx_t NotDistinctFrom(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                             SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A > B with nulls being maximal
+	static idx_t DistinctGreaterThan(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                                 SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A >= B with nulls being maximal
+	static idx_t DistinctGreaterThanEquals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                                       SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A < B with nulls being maximal
+	static idx_t DistinctLessThan(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                              SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A <= B with nulls being maximal
+	static idx_t DistinctLessThanEquals(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                                    SelectionVector *true_sel, SelectionVector *false_sel);
+
+	// true := A > B with nulls being minimal
+	static idx_t DistinctGreaterThanNullsFirst(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                                           SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A < B with nulls being minimal
+	static idx_t DistinctLessThanNullsFirst(Vector &left, Vector &right, const SelectionVector *sel, idx_t count,
+	                                        SelectionVector *true_sel, SelectionVector *false_sel);
+
+	//===--------------------------------------------------------------------===//
+	// Nested Comparisons
+	//===--------------------------------------------------------------------===//
+	// true := A != B with nulls being equal
+	static idx_t NestedNotEquals(Vector &left, Vector &right, const SelectionVector &sel, idx_t count,
+	                             SelectionVector *true_sel, SelectionVector *false_sel);
+	// true := A == B with nulls being equal
+	static idx_t NestedEquals(Vector &left, Vector &right, const SelectionVector &sel, idx_t count,
+	                          SelectionVector *true_sel, SelectionVector *false_sel);
 
 	//===--------------------------------------------------------------------===//
 	// Hash functions
 	//===--------------------------------------------------------------------===//
-	// result = HASH(A)
+	// hashes = HASH(input)
 	static void Hash(Vector &input, Vector &hashes, idx_t count);
 	static void Hash(Vector &input, Vector &hashes, const SelectionVector &rsel, idx_t count);
-	// A ^= HASH(B)
-	static void CombineHash(Vector &hashes, Vector &B, idx_t count);
-	static void CombineHash(Vector &hashes, Vector &B, const SelectionVector &rsel, idx_t count);
+	// hashes ^= HASH(input)
+	static void CombineHash(Vector &hashes, Vector &input, idx_t count);
+	static void CombineHash(Vector &hashes, Vector &input, const SelectionVector &rsel, idx_t count);
 
 	//===--------------------------------------------------------------------===//
 	// Generate functions
@@ -95,15 +154,24 @@ struct VectorOperations {
 	//===--------------------------------------------------------------------===//
 	// Helpers
 	//===--------------------------------------------------------------------===//
-	// Cast the data from the source type to the target type
-	static void Cast(Vector &source, Vector &result, SQLType source_type, SQLType target_type, idx_t count,
-	                 bool strict = false);
-	// Cast the data from the source type to the target type
-	static void Cast(Vector &source, Vector &result, idx_t count, bool strict = false);
+	//! Cast the data from the source type to the target type. Any elements that could not be converted are turned into
+	//! NULLs. If any elements cannot be converted, returns false and fills in the error_message. If no error message is
+	//! provided, an exception is thrown instead.
+	DUCKDB_API static bool TryCast(CastFunctionSet &set, GetCastFunctionInput &input, Vector &source, Vector &result,
+	                               idx_t count, string *error_message, bool strict = false);
+	DUCKDB_API static bool DefaultTryCast(Vector &source, Vector &result, idx_t count, string *error_message,
+	                                      bool strict = false);
+	DUCKDB_API static bool TryCast(ClientContext &context, Vector &source, Vector &result, idx_t count,
+	                               string *error_message, bool strict = false);
+	//! Cast the data from the source type to the target type. Throws an exception if the cast fails.
+	DUCKDB_API static void Cast(ClientContext &context, Vector &source, Vector &result, idx_t count,
+	                            bool strict = false);
+	DUCKDB_API static void DefaultCast(Vector &source, Vector &result, idx_t count, bool strict = false);
 
 	// Copy the data of <source> to the target vector
-	static void Copy(Vector &source, Vector &target, idx_t source_count, idx_t source_offset, idx_t target_offset);
-	static void Copy(Vector &source, Vector &target, const SelectionVector &sel, idx_t source_count,
+	static void Copy(const Vector &source, Vector &target, idx_t source_count, idx_t source_offset,
+	                 idx_t target_offset);
+	static void Copy(const Vector &source, Vector &target, const SelectionVector &sel, idx_t source_count,
 	                 idx_t source_offset, idx_t target_offset);
 
 	// Copy the data of <source> to the target location, setting null values to

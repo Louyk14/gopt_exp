@@ -16,16 +16,23 @@ namespace duckdb {
 //! PhysicalCreateSequence represents a CREATE SEQUENCE command
 class PhysicalCreateSequence : public PhysicalOperator {
 public:
-	PhysicalCreateSequence(unique_ptr<CreateSequenceInfo> info)
-	    : PhysicalOperator(PhysicalOperatorType::CREATE_SEQUENCE, {TypeId::BOOL}), info(move(info)) {
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::CREATE_SEQUENCE;
+
+public:
+	explicit PhysicalCreateSequence(unique_ptr<CreateSequenceInfo> info, idx_t estimated_cardinality)
+	    : PhysicalOperator(PhysicalOperatorType::CREATE_SEQUENCE, {LogicalType::BIGINT}, estimated_cardinality),
+	      info(std::move(info)) {
 	}
 
 	unique_ptr<CreateSequenceInfo> info;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
+	// Source interface
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+
+	bool IsSource() const override {
+		return true;
+	}
 };
 
 } // namespace duckdb

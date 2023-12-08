@@ -1,128 +1,196 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_default_expression.hpp"
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
-#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/function/cast_rules.hpp"
+#include "duckdb/function/cast/cast_function_set.hpp"
+#include "duckdb/main/config.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-BoundCastExpression::BoundCastExpression(TypeId target, unique_ptr<Expression> child, SQLType source_type,
-                                         SQLType target_type)
-    : Expression(ExpressionType::OPERATOR_CAST, ExpressionClass::BOUND_CAST, target), child(move(child)),
-      source_type(source_type), target_type(target_type) {
+static BoundCastInfo BindCastFunction(ClientContext &context, const LogicalType &source, const LogicalType &target) {
+	auto &cast_functions = DBConfig::GetConfig(context).GetCastFunctions();
+	GetCastFunctionInput input(context);
+	return cast_functions.GetCastFunction(source, target, input);
 }
 
-unique_ptr<Expression> BoundCastExpression::AddCastToType(unique_ptr<Expression> expr, SQLType source_type,
-                                                          SQLType target_type) {
-	assert(expr);
+BoundCastExpression::BoundCastExpression(unique_ptr<Expression> child_p, LogicalType target_type_p,
+                                         BoundCastInfo bound_cast_p, bool try_cast_p)
+    : Expression(ExpressionType::OPERATOR_CAST, ExpressionClass::BOUND_CAST, std::move(target_type_p)),
+      child(std::move(child_p)), try_cast(try_cast_p), bound_cast(std::move(bound_cast_p)) {
+}
+
+BoundCastExpression::BoundCastExpression(ClientContext &context, unique_ptr<Expression> child_p,
+                                         LogicalType target_type_p)
+    : Expression(ExpressionType::OPERATOR_CAST, ExpressionClass::BOUND_CAST, std::move(target_type_p)),
+      child(std::move(child_p)), try_cast(false),
+      bound_cast(BindCastFunction(context, child->return_type, return_type)) {
+}
+
+unique_ptr<Expression> AddCastExpressionInternal(unique_ptr<Expression> expr, const LogicalType &target_type,
+                                                 BoundCastInfo bound_cast, bool try_cast) {
+	if (expr->return_type == target_type) {
+		return expr;
+	}
+	auto &expr_type = expr->return_type;
+	if (target_type.id() == LogicalTypeId::LIST && expr_type.id() == LogicalTypeId::LIST) {
+		auto &target_list = ListType::GetChildType(target_type);
+		auto &expr_list = ListType::GetChildType(expr_type);
+		if (target_list.id() == LogicalTypeId::ANY || expr_list == target_list) {
+			return expr;
+		}
+	}
+	return make_uniq<BoundCastExpression>(std::move(expr), target_type, std::move(bound_cast), try_cast);
+}
+
+unique_ptr<Expression> AddCastToTypeInternal(unique_ptr<Expression> expr, const LogicalType &target_type,
+                                             CastFunctionSet &cast_functions, GetCastFunctionInput &get_input,
+                                             bool try_cast) {
+	D_ASSERT(expr);
 	if (expr->expression_class == ExpressionClass::BOUND_PARAMETER) {
-		auto &parameter = (BoundParameterExpression &)*expr;
-		parameter.sql_type = target_type;
-		parameter.return_type = GetInternalType(target_type);
+		auto &parameter = expr->Cast<BoundParameterExpression>();
+		if (!target_type.IsValid()) {
+			// invalidate the parameter
+			parameter.parameter_data->return_type = LogicalType::INVALID;
+			parameter.return_type = target_type;
+			return expr;
+		}
+		if (parameter.parameter_data->return_type.id() == LogicalTypeId::INVALID) {
+			// we don't know the type of this parameter
+			parameter.return_type = target_type;
+			return expr;
+		}
+		if (parameter.parameter_data->return_type.id() == LogicalTypeId::UNKNOWN) {
+			// prepared statement parameter cast - but there is no type, convert the type
+			parameter.parameter_data->return_type = target_type;
+			parameter.return_type = target_type;
+			return expr;
+		}
+		// prepared statement parameter already has a type
+		if (parameter.parameter_data->return_type == target_type) {
+			// this type! we are done
+			parameter.return_type = parameter.parameter_data->return_type;
+			return expr;
+		}
+		// invalidate the type
+		parameter.parameter_data->return_type = LogicalType::INVALID;
+		parameter.return_type = target_type;
+		return expr;
 	} else if (expr->expression_class == ExpressionClass::BOUND_DEFAULT) {
-		auto &def = (BoundDefaultExpression &)*expr;
-		def.sql_type = target_type;
-		def.return_type = GetInternalType(target_type);
-	} else if (source_type != target_type) {
-		return make_unique<BoundCastExpression>(GetInternalType(target_type), move(expr), source_type, target_type);
+		D_ASSERT(target_type.IsValid());
+		auto &def = expr->Cast<BoundDefaultExpression>();
+		def.return_type = target_type;
 	}
-	return expr;
+	if (!target_type.IsValid()) {
+		return expr;
+	}
+
+	auto cast_function = cast_functions.GetCastFunction(expr->return_type, target_type, get_input);
+	return AddCastExpressionInternal(std::move(expr), target_type, std::move(cast_function), try_cast);
 }
 
-bool BoundCastExpression::CastIsInvertible(SQLType source_type, SQLType target_type) {
-	if (source_type.id == SQLTypeId::BOOLEAN || target_type.id == SQLTypeId::BOOLEAN) {
+unique_ptr<Expression> BoundCastExpression::AddDefaultCastToType(unique_ptr<Expression> expr,
+                                                                 const LogicalType &target_type, bool try_cast) {
+	CastFunctionSet default_set;
+	GetCastFunctionInput get_input;
+	return AddCastToTypeInternal(std::move(expr), target_type, default_set, get_input, try_cast);
+}
+
+unique_ptr<Expression> BoundCastExpression::AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
+                                                          const LogicalType &target_type, bool try_cast) {
+	auto &cast_functions = DBConfig::GetConfig(context).GetCastFunctions();
+	GetCastFunctionInput get_input(context);
+	return AddCastToTypeInternal(std::move(expr), target_type, cast_functions, get_input, try_cast);
+}
+
+bool BoundCastExpression::CastIsInvertible(const LogicalType &source_type, const LogicalType &target_type) {
+	D_ASSERT(source_type.IsValid() && target_type.IsValid());
+	if (source_type.id() == LogicalTypeId::BOOLEAN || target_type.id() == LogicalTypeId::BOOLEAN) {
 		return false;
 	}
-	if (source_type.id == SQLTypeId::FLOAT || target_type.id == SQLTypeId::FLOAT) {
+	if (source_type.id() == LogicalTypeId::FLOAT || target_type.id() == LogicalTypeId::FLOAT) {
 		return false;
 	}
-	if (source_type.id == SQLTypeId::DOUBLE || target_type.id == SQLTypeId::DOUBLE) {
+	if (source_type.id() == LogicalTypeId::DOUBLE || target_type.id() == LogicalTypeId::DOUBLE) {
 		return false;
 	}
-	if (source_type.id == SQLTypeId::VARCHAR) {
-		return target_type.id == SQLTypeId::DATE || target_type.id == SQLTypeId::TIMESTAMP;
+	if (source_type.id() == LogicalTypeId::DECIMAL || target_type.id() == LogicalTypeId::DECIMAL) {
+		uint8_t source_width, target_width;
+		uint8_t source_scale, target_scale;
+		// cast to or from decimal
+		// cast is only invertible if the cast is strictly widening
+		if (!source_type.GetDecimalProperties(source_width, source_scale)) {
+			return false;
+		}
+		if (!target_type.GetDecimalProperties(target_width, target_scale)) {
+			return false;
+		}
+		if (target_scale < source_scale) {
+			return false;
+		}
+		return true;
 	}
-	if (target_type.id == SQLTypeId::VARCHAR) {
-		return source_type.id == SQLTypeId::DATE || source_type.id == SQLTypeId::TIMESTAMP;
+	if (source_type.id() == LogicalTypeId::TIMESTAMP || source_type.id() == LogicalTypeId::TIMESTAMP_TZ) {
+		switch (target_type.id()) {
+		case LogicalTypeId::DATE:
+		case LogicalTypeId::TIME:
+		case LogicalTypeId::TIME_TZ:
+			return false;
+		default:
+			break;
+		}
+	}
+	if (source_type.id() == LogicalTypeId::VARCHAR) {
+		switch (target_type.id()) {
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_NS:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIMESTAMP_TZ:
+			return true;
+		default:
+			return false;
+		}
+	}
+	if (target_type.id() == LogicalTypeId::VARCHAR) {
+		switch (source_type.id()) {
+		case LogicalTypeId::DATE:
+		case LogicalTypeId::TIME:
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_NS:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIME_TZ:
+		case LogicalTypeId::TIMESTAMP_TZ:
+			return true;
+		default:
+			return false;
+		}
 	}
 	return true;
 }
 
 string BoundCastExpression::ToString() const {
-	return "CAST[" + TypeIdToString(return_type) + "](" + child->GetName() + ")";
+	return (try_cast ? "TRY_CAST(" : "CAST(") + child->GetName() + " AS " + return_type.ToString() + ")";
 }
 
-bool BoundCastExpression::Equals(const BaseExpression *other_) const {
-	if (!BaseExpression::Equals(other_)) {
+bool BoundCastExpression::Equals(const BaseExpression &other_p) const {
+	if (!Expression::Equals(other_p)) {
 		return false;
 	}
-	auto other = (BoundCastExpression *)other_;
-	if (!Expression::Equals(child.get(), other->child.get())) {
+	auto &other = other_p.Cast<BoundCastExpression>();
+	if (!Expression::Equals(*child, *other.child)) {
 		return false;
 	}
-	if (source_type != other->source_type || target_type != other->target_type) {
+	if (try_cast != other.try_cast) {
 		return false;
 	}
 	return true;
 }
 
 unique_ptr<Expression> BoundCastExpression::Copy() {
-	auto copy = make_unique<BoundCastExpression>(return_type, child->Copy(), source_type, target_type);
+	auto copy = make_uniq<BoundCastExpression>(child->Copy(), return_type, bound_cast.Copy(), try_cast);
 	copy->CopyProperties(*this);
-	return move(copy);
+	return std::move(copy);
 }
 
-substrait::AggregateFunction* BoundCastExpression::ToAggregateFunction() const {
-    substrait::AggregateFunction* aggregate_function = new substrait::AggregateFunction();
-    aggregate_function->set_exp_type(ExpressionTypeToString(type));
-
-    aggregate_function->set_binder(alias);
-
-    substrait::FunctionArgument* child = new substrait::FunctionArgument();
-    substrait::Expression* expr = new substrait::Expression();
-    child->set_allocated_value(expr);
-
-    BoundReferenceExpression* child_bound = (BoundReferenceExpression*) this->child.get();
-    substrait::Expression_FieldReference* selection = new substrait::Expression_FieldReference();
-    expr->set_allocated_selection(selection);
-    substrait::Expression_ReferenceSegment* direct = new substrait::Expression_ReferenceSegment();
-    selection->set_allocated_direct_reference(direct);
-    substrait::Expression_ReferenceSegment_MapKey* name_map_key = new substrait::Expression_ReferenceSegment_MapKey();
-    direct->set_allocated_map_key(name_map_key);
-    substrait::Expression_Literal* name = new substrait::Expression_Literal();
-    name_map_key->set_allocated_map_key(name);
-    string* alias = new string(child_bound->alias);
-    name->set_allocated_string(alias);
-
-    substrait::Expression_ReferenceSegment* type_expr = new substrait::Expression_ReferenceSegment();
-    name_map_key->set_allocated_child(type_expr);
-    substrait::Expression_ReferenceSegment_MapKey* type_map_key = new substrait::Expression_ReferenceSegment_MapKey();
-    type_expr->set_allocated_map_key(type_map_key);
-    substrait::Expression_Literal* type = new substrait::Expression_Literal();
-    type_map_key->set_allocated_map_key(type);
-    string* type_str = new string(TypeIdToString(child_bound->return_type));
-    type->set_allocated_string(type_str);
-
-    substrait::Expression_ReferenceSegment* index_expr = new substrait::Expression_ReferenceSegment();
-    type_map_key->set_allocated_child(index_expr);
-    substrait::Expression_ReferenceSegment_StructField* index_field = new substrait::Expression_ReferenceSegment_StructField();
-    index_expr->set_allocated_struct_field(index_field);
-    index_field->set_field(child_bound->index);
-
-    *aggregate_function->add_childs() = *child;
-    delete child;
-
-    substrait::FunctionArgument* arg_source = new substrait::FunctionArgument();
-    string* source_str = new string(SQLTypeIdToString(source_type.id));
-    arg_source->set_allocated_enum_(source_str);
-    *aggregate_function->add_arguments() = *arg_source;
-    delete arg_source;
-
-    substrait::FunctionArgument* arg_target = new substrait::FunctionArgument();
-    string* target_str = new string(SQLTypeIdToString(target_type.id));
-    arg_target->set_allocated_enum_(target_str);
-    *aggregate_function->add_arguments() = *arg_target;
-    delete arg_target;
-
-    return aggregate_function;
-}
+} // namespace duckdb

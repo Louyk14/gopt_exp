@@ -3,19 +3,18 @@
 
 #include "duckdb/common/exception.hpp"
 
-using namespace std;
-
 namespace duckdb {
 
-static bool suffix(const string_t &str, const string_t &suffix);
+static bool SuffixFunction(const string_t &str, const string_t &suffix);
 
 struct SuffixOperator {
-	template <class TA, class TB, class TR> static inline TR Operation(TA left, TB right) {
-		return suffix(left, right);
+	template <class TA, class TB, class TR>
+	static inline TR Operation(TA left, TB right) {
+		return SuffixFunction(left, right);
 	}
 };
 
-static bool suffix(const string_t &str, const string_t &suffix) {
+static bool SuffixFunction(const string_t &str, const string_t &suffix) {
 	auto suffix_size = suffix.GetSize();
 	auto str_size = str.GetSize();
 	if (suffix_size > str_size) {
@@ -35,14 +34,14 @@ static bool suffix(const string_t &str, const string_t &suffix) {
 }
 
 ScalarFunction SuffixFun::GetFunction() {
-	return ScalarFunction("suffix",                             // name of the function
-	                      {SQLType::VARCHAR, SQLType::VARCHAR}, // argument list
-	                      SQLType::BOOLEAN,                     // return type
-	                      ScalarFunction::BinaryFunction<string_t, string_t, bool, SuffixOperator, true>);
+	return ScalarFunction("suffix",                                     // name of the function
+	                      {LogicalType::VARCHAR, LogicalType::VARCHAR}, // argument list
+	                      LogicalType::BOOLEAN,                         // return type
+	                      ScalarFunction::BinaryFunction<string_t, string_t, bool, SuffixOperator>);
 }
 
 void SuffixFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(GetFunction());
+	set.AddFunction({"suffix", "ends_with"}, GetFunction());
 }
 
 } // namespace duckdb

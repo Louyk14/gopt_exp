@@ -17,14 +17,17 @@ namespace duckdb {
 
 class BoundSubqueryExpression : public Expression {
 public:
-	BoundSubqueryExpression(TypeId return_type);
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_SUBQUERY;
+
+public:
+	explicit BoundSubqueryExpression(LogicalType return_type);
 
 	bool IsCorrelated() {
 		return binder->correlated_columns.size() > 0;
 	}
 
 	//! The binder used to bind the subquery node
-	unique_ptr<Binder> binder;
+	shared_ptr<Binder> binder;
 	//! The bound subquery node
 	unique_ptr<BoundQueryNode> subquery;
 	//! The subquery type
@@ -33,11 +36,11 @@ public:
 	unique_ptr<Expression> child;
 	//! The comparison type of the child expression with the subquery (in case of ANY, ALL operators)
 	ExpressionType comparison_type;
-	//! The SQLType of the subquery result. Only used for ANY expressions.
-	SQLType child_type;
-	//! The target SQLType of the subquery result (i.e. to which type it should be casted, if child_type <>
+	//! The LogicalType of the subquery result. Only used for ANY expressions.
+	LogicalType child_type;
+	//! The target LogicalType of the subquery result (i.e. to which type it should be casted, if child_type <>
 	//! child_target). Only used for ANY expressions.
-	SQLType child_target;
+	LogicalType child_target;
 
 public:
 	bool HasSubquery() const override {
@@ -52,8 +55,10 @@ public:
 
 	string ToString() const override;
 
-	bool Equals(const BaseExpression *other) const override;
+	bool Equals(const BaseExpression &other) const override;
 
 	unique_ptr<Expression> Copy() override;
+
+	bool PropagatesNullValues() const override;
 };
 } // namespace duckdb

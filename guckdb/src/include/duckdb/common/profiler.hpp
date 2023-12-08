@@ -8,16 +8,14 @@
 
 #pragma once
 
+#include "duckdb/common/chrono.hpp"
 #include "duckdb/common/helper.hpp"
-
-#include <chrono>
-
-typedef std::chrono::milliseconds ms_type;
 
 namespace duckdb {
 
 //! The profiler can be used to measure elapsed time
-class Profiler {
+template <typename T>
+class BaseProfiler {
 public:
 	//! Starts the timer
 	void Start() {
@@ -35,15 +33,18 @@ public:
 	//! right now.
 	double Elapsed() const {
 		auto _end = finished ? end : Tick();
-		return std::chrono::duration_cast<ms_type>(_end - start).count();
+		return std::chrono::duration_cast<std::chrono::duration<double>>(_end - start).count();
 	}
 
 private:
-	std::chrono::time_point<std::chrono::system_clock, ms_type> Tick() const {
-		return std::chrono::time_point_cast<ms_type>(std::chrono::system_clock::now());
+	time_point<T> Tick() const {
+		return T::now();
 	}
-	std::chrono::time_point<std::chrono::system_clock, ms_type> start;
-	std::chrono::time_point<std::chrono::system_clock, ms_type> end;
+	time_point<T> start;
+	time_point<T> end;
 	bool finished = false;
 };
+
+using Profiler = BaseProfiler<system_clock>;
+
 } // namespace duckdb

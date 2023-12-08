@@ -8,84 +8,74 @@
 
 #pragma once
 
+#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "duckdb/storage/buffer/buffer_list.hpp"
-#include "duckdb/storage/buffer/managed_buffer.hpp"
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/common/file_system.hpp"
-#include "duckdb/common/unordered_map.hpp"
-
-#include <mutex>
+#include "duckdb/storage/buffer/temporary_file_information.hpp"
+#include "duckdb/main/config.hpp"
 
 namespace duckdb {
 
-//! The buffer manager is in charge of handling memory management for the database. It hands out memory buffers that can
-//! be used by the database internally.
+class Allocator;
+class BufferPool;
+
 class BufferManager {
 	friend class BufferHandle;
+	friend class BlockHandle;
+	friend class BlockManager;
 
 public:
-	BufferManager(FileSystem &fs, BlockManager &manager, string temp_directory, idx_t maximum_memory);
-	~BufferManager();
+	BufferManager() {
+	}
+	virtual ~BufferManager() {
+	}
 
-	//! Pin a block id, returning a block handle holding a pointer to the block
-	unique_ptr<BufferHandle> Pin(block_id_t block, bool can_destroy = false);
-
-	//! Allocate a buffer of arbitrary size, as long as it is >= BLOCK_SIZE. can_destroy signifies whether or not the
-	//! buffer can be destroyed when unpinned, or whether or not it needs to be written to a temporary file so it can be
-	//! reloaded.
-	unique_ptr<BufferHandle> Allocate(idx_t alloc_size, bool can_destroy = false);
-	//! Destroy the managed buffer with the specified buffer_id, freeing its memory
-	void DestroyBuffer(block_id_t buffer_id, bool can_destroy = false);
-
+public:
+	static unique_ptr<BufferManager> CreateStandardBufferManager(DatabaseInstance &db, DBConfig &config);
+	virtual BufferHandle Allocate(idx_t block_size, bool can_destroy = true,
+	                              shared_ptr<BlockHandle> *block = nullptr) = 0;
+	//! Reallocate an in-memory buffer that is pinned.
+	virtual void ReAllocate(shared_ptr<BlockHandle> &handle, idx_t block_size) = 0;
+	virtual BufferHandle Pin(shared_ptr<BlockHandle> &handle) = 0;
+	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
+	//! Returns the currently allocated memory
+	virtual idx_t GetUsedMemory() const = 0;
+	//! Returns the maximum available memory
+	virtual idx_t GetMaxMemory() const = 0;
+	virtual shared_ptr<BlockHandle> RegisterSmallMemory(idx_t block_size);
+	virtual DUCKDB_API Allocator &GetBufferAllocator();
+	virtual DUCKDB_API void ReserveMemory(idx_t size);
+	virtual DUCKDB_API void FreeReservedMemory(idx_t size);
 	//! Set a new memory limit to the buffer manager, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted
-	void SetLimit(idx_t limit = (idx_t)-1);
+	virtual void SetLimit(idx_t limit = (idx_t)-1);
+	virtual vector<TemporaryFileInformation> GetTemporaryFiles();
+	virtual const string &GetTemporaryDirectory();
+	virtual void SetTemporaryDirectory(const string &new_dir);
+	virtual DatabaseInstance &GetDatabase();
+	virtual bool HasTemporaryDirectory() const;
+	//! Construct a managed buffer.
+	virtual unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, unique_ptr<FileBuffer> &&source,
+	                                                      FileBufferType type = FileBufferType::MANAGED_BUFFER);
+	//! Get the underlying buffer pool responsible for managing the buffers
+	virtual BufferPool &GetBufferPool();
 
-	static BufferManager &GetBufferManager(ClientContext &context);
+	// Static methods
+	DUCKDB_API static BufferManager &GetBufferManager(DatabaseInstance &db);
+	DUCKDB_API static BufferManager &GetBufferManager(ClientContext &context);
+	DUCKDB_API static BufferManager &GetBufferManager(AttachedDatabase &db);
 
-private:
-	unique_ptr<BufferHandle> PinBlock(block_id_t block_id);
-	unique_ptr<BufferHandle> PinBuffer(block_id_t block_id, bool can_destroy = false);
+	static idx_t GetAllocSize(idx_t block_size) {
+		return AlignValue<idx_t, Storage::SECTOR_SIZE>(block_size + Storage::BLOCK_HEADER_SIZE);
+	}
 
-	//! Unpin a block id, decreasing its reference count and potentially allowing it to be freed.
-	void Unpin(block_id_t block);
-
-	//! Evict the least recently used block from the buffer manager, or throws an exception if there are no blocks
-	//! available to evict
-	unique_ptr<Block> EvictBlock();
-
-	//! Add a reference to the refcount of a buffer entry
-	void AddReference(BufferEntry *entry);
-
-	//! Write a temporary buffer to disk
-	void WriteTemporaryBuffer(ManagedBuffer &buffer);
-	//! Read a temporary buffer from disk
-	unique_ptr<BufferHandle> ReadTemporaryBuffer(block_id_t id);
-	//! Get the path of the temporary buffer
-	string GetTemporaryPath(block_id_t id);
-
-	void DeleteTemporaryFile(block_id_t id);
-
-public:
-	FileSystem &fs;
-	//! The block manager
-	BlockManager &manager;
-	//! The current amount of memory that is occupied by the buffer manager (in bytes)
-	idx_t current_memory;
-	//! The maximum amount of memory that the buffer manager can keep (in bytes)
-	idx_t maximum_memory;
-	//! The directory name where temporary files are stored
-	string temp_directory;
-	//! The lock for the set of blocks
-	std::mutex block_lock;
-	//! A mapping of block id -> BufferEntry
-	unordered_map<block_id_t, BufferEntry *> blocks;
-	//! A linked list of buffer entries that are in use
-	BufferList used_list;
-	//! LRU list of unused blocks
-	BufferList lru;
-	//! The temporary id used for managed buffers
-	block_id_t temporary_id;
+protected:
+	virtual void PurgeQueue() = 0;
+	virtual void AddToEvictionQueue(shared_ptr<BlockHandle> &handle);
+	virtual void WriteTemporaryBuffer(block_id_t block_id, FileBuffer &buffer);
+	virtual unique_ptr<FileBuffer> ReadTemporaryBuffer(block_id_t id, unique_ptr<FileBuffer> buffer);
+	virtual void DeleteTemporaryFile(block_id_t id);
 };
+
 } // namespace duckdb

@@ -11,16 +11,19 @@
 #include "duckdb/execution/physical_operator.hpp"
 
 namespace duckdb {
+
 class PhysicalUnion : public PhysicalOperator {
 public:
-	PhysicalUnion(LogicalOperator &op, unique_ptr<PhysicalOperator> top, unique_ptr<PhysicalOperator> bottom);
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::UNION;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
-	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
+	PhysicalUnion(vector<LogicalType> types, unique_ptr<PhysicalOperator> top, unique_ptr<PhysicalOperator> bottom,
+	              idx_t estimated_cardinality);
+
+public:
+	void BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) override;
+	vector<const_reference<PhysicalOperator>> GetSources() const override;
     substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const override;
 };
 
-}; // namespace duckdb
+} // namespace duckdb

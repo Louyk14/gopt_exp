@@ -12,12 +12,11 @@
 
 #include <random>
 namespace duckdb {
-class TableFilter;
 
 class AdaptiveFilter {
 public:
-	AdaptiveFilter(Expression &expr);
-	AdaptiveFilter(unordered_map<idx_t, vector<TableFilter>> &table_filters);
+	explicit AdaptiveFilter(const Expression &expr);
+	explicit AdaptiveFilter(TableFilterSet *table_filters);
 	void AdaptRuntimeStatistics(double duration);
 	vector<idx_t> permutation;
 

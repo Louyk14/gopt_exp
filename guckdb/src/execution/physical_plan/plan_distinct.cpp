@@ -3,69 +3,87 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/function/aggregate/distributive_functions.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
-#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_distinct.hpp"
+#include "duckdb/function/function_binder.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreateDistinct(unique_ptr<PhysicalOperator> child) {
-	assert(child);
-	// create a PhysicalHashAggregate that groups by the input columns
-	auto &types = child->GetTypes();
-	vector<unique_ptr<Expression>> groups, expressions;
-	for (idx_t i = 0; i < types.size(); i++) {
-		groups.push_back(make_unique<BoundReferenceExpression>(types[i], i));
-	}
-
-	auto groupby =
-	    make_unique<PhysicalHashAggregate>(types, move(expressions), move(groups), PhysicalOperatorType::DISTINCT);
-	groupby->children.push_back(move(child));
-	return move(groupby);
-}
-
-unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreateDistinctOn(unique_ptr<PhysicalOperator> child,
-                                                                     vector<unique_ptr<Expression>> distinct_targets) {
-	assert(child);
-	assert(distinct_targets.size() > 0);
+unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreatePlan(LogicalDistinct &op) {
+	D_ASSERT(op.children.size() == 1);
+	auto child = CreatePlan(*op.children[0]);
+	auto &distinct_targets = op.distinct_targets;
+	D_ASSERT(child);
+	D_ASSERT(!distinct_targets.empty());
 
 	auto &types = child->GetTypes();
 	vector<unique_ptr<Expression>> groups, aggregates, projections;
+	idx_t group_count = distinct_targets.size();
+	unordered_map<idx_t, idx_t> group_by_references;
+	vector<LogicalType> aggregate_types;
 	// creates one group per distinct_target
-	for (auto &target : distinct_targets) {
-		groups.push_back(move(target));
+	for (idx_t i = 0; i < distinct_targets.size(); i++) {
+		auto &target = distinct_targets[i];
+		if (target->type == ExpressionType::BOUND_REF) {
+			auto &bound_ref = target->Cast<BoundReferenceExpression>();
+			group_by_references[bound_ref.index] = i;
+		}
+		aggregate_types.push_back(target->return_type);
+		groups.push_back(std::move(target));
+	}
+	bool requires_projection = false;
+	if (types.size() != group_count) {
+		requires_projection = true;
 	}
 	// we need to create one aggregate per column in the select_list
 	for (idx_t i = 0; i < types.size(); ++i) {
-		// first we create an aggregate that returns the FIRST element
-		auto bound = make_unique<BoundReferenceExpression>(types[i], i);
-		auto first_aggregate = make_unique<BoundAggregateExpression>(
-		    types[i], FirstFun::GetFunction(SQLTypeFromInternalType(types[i])), false);
-		first_aggregate->children.push_back(move(bound));
-		// and push it to the list of aggregates
-		aggregates.push_back(move(first_aggregate));
-		projections.push_back(make_unique<BoundReferenceExpression>(types[i], i));
+		auto logical_type = types[i];
+		// check if we can directly refer to a group, or if we need to push an aggregate with FIRST
+		auto entry = group_by_references.find(i);
+		if (entry != group_by_references.end()) {
+			auto group_index = entry->second;
+			// entry is found: can directly refer to a group
+			projections.push_back(make_uniq<BoundReferenceExpression>(logical_type, group_index));
+			if (group_index != i) {
+				// we require a projection only if this group element is out of order
+				requires_projection = true;
+			}
+		} else {
+			if (op.distinct_type == DistinctType::DISTINCT && op.order_by) {
+				throw InternalException("Entry that is not a group, but not a DISTINCT ON aggregate");
+			}
+			// entry is not one of the groups: need to push a FIRST aggregate
+			auto bound = make_uniq<BoundReferenceExpression>(logical_type, i);
+			vector<unique_ptr<Expression>> first_children;
+			first_children.push_back(std::move(bound));
+
+			FunctionBinder function_binder(context);
+			auto first_aggregate = function_binder.BindAggregateFunction(
+			    FirstFun::GetFunction(logical_type), std::move(first_children), nullptr, AggregateType::NON_DISTINCT);
+			first_aggregate->order_bys = op.order_by ? op.order_by->Copy() : nullptr;
+			// add the projection
+			projections.push_back(make_uniq<BoundReferenceExpression>(logical_type, group_count + aggregates.size()));
+			// push it to the list of aggregates
+			aggregate_types.push_back(logical_type);
+			aggregates.push_back(std::move(first_aggregate));
+			requires_projection = true;
+		}
 	}
+
+	child = ExtractAggregateExpressions(std::move(child), aggregates, groups);
 
 	// we add a physical hash aggregation in the plan to select the distinct groups
-	auto groupby =
-	    make_unique<PhysicalHashAggregate>(types, move(aggregates), move(groups), PhysicalOperatorType::DISTINCT);
-	groupby->children.push_back(move(child));
+	auto groupby = make_uniq<PhysicalHashAggregate>(context, aggregate_types, std::move(aggregates), std::move(groups),
+	                                                child->estimated_cardinality);
+	groupby->children.push_back(std::move(child));
+	if (!requires_projection) {
+		return std::move(groupby);
+	}
 
 	// we add a physical projection on top of the aggregation to project all members in the select list
-	auto aggr_projection = make_unique<PhysicalProjection>(types, move(projections));
-	aggr_projection->children.push_back(move(groupby));
-
-	return move(aggr_projection);
+	auto aggr_projection = make_uniq<PhysicalProjection>(types, std::move(projections), groupby->estimated_cardinality);
+	aggr_projection->children.push_back(std::move(groupby));
+	return std::move(aggr_projection);
 }
 
-unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreatePlan(LogicalDistinct &op) {
-	assert(op.children.size() == 1);
-	auto plan = CreatePlan(*op.children[0]);
-	if (op.distinct_targets.size() > 0) {
-		return CreateDistinctOn(move(plan), move(op.distinct_targets));
-	} else {
-		return CreateDistinct(move(plan));
-	}
-}
+} // namespace duckdb

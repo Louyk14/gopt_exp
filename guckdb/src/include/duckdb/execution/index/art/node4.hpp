@@ -7,33 +7,57 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
+
+#include "duckdb/execution/index/fixed_size_allocator.hpp"
+#include "duckdb/execution/index/art/art.hpp"
 #include "duckdb/execution/index/art/node.hpp"
 
 namespace duckdb {
 
-class Node4 : public Node {
+//! Node4 holds up to four Node children sorted by their key byte
+class Node4 {
 public:
-	Node4(ART &art, size_t compressionLength);
+	//! Delete copy constructors, as any Node4 can never own its memory
+	Node4(const Node4 &) = delete;
+	Node4 &operator=(const Node4 &) = delete;
 
-	uint8_t key[4];
-	unique_ptr<Node> child[4];
+	//! Number of non-null children
+	uint8_t count;
+	//! Array containing all partial key bytes
+	uint8_t key[Node::NODE_4_CAPACITY];
+	//! Node pointers to the child nodes
+	Node children[Node::NODE_4_CAPACITY];
 
 public:
-	//! Get position of a byte, returns -1 if not exists
-	idx_t GetChildPos(uint8_t k) override;
-	//! Get the position of the first child that is greater or equal to the specific byte, or INVALID_INDEX if there are
-	//! no children matching the criteria
-	idx_t GetChildGreaterEqual(uint8_t k, bool &equal) override;
-	//! Get the next position in the node, or INVALID_INDEX if there is no next position
-	idx_t GetNextPos(idx_t pos) override;
-	//! Get Node4 Child
-	unique_ptr<Node> *GetChild(idx_t pos) override;
+	//! Get a new Node4, might cause a new buffer allocation, and initialize it
+	static Node4 &New(ART &art, Node &node);
+	//! Free the node (and its subtree)
+	static void Free(ART &art, Node &node);
 
-	idx_t GetMin() override;
+	//! Initializes all fields of the node while shrinking a Node16 to a Node4
+	static Node4 &ShrinkNode16(ART &art, Node &node4, Node &node16);
 
-	//! Insert Leaf to the Node4
-	static void insert(ART &art, unique_ptr<Node> &node, uint8_t keyByte, unique_ptr<Node> &child);
-	//! Remove Leaf from Node4
-	static void erase(ART &art, unique_ptr<Node> &node, int pos);
+	//! Initializes a merge by incrementing the buffer IDs of the child nodes
+	void InitializeMerge(ART &art, const ARTFlags &flags);
+
+	//! Insert a child node at byte
+	static void InsertChild(ART &art, Node &node, const uint8_t byte, const Node child);
+	//! Delete the child node at byte
+	static void DeleteChild(ART &art, Node &node, Node &prefix, const uint8_t byte);
+
+	//! Replace the child node at byte
+	void ReplaceChild(const uint8_t byte, const Node child);
+
+	//! Get the (immutable) child for the respective byte in the node
+	optional_ptr<const Node> GetChild(const uint8_t byte) const;
+	//! Get the child for the respective byte in the node
+	optional_ptr<Node> GetChildMutable(const uint8_t byte);
+	//! Get the first (immutable) child that is greater or equal to the specific byte
+	optional_ptr<const Node> GetNextChild(uint8_t &byte) const;
+	//! Get the first child that is greater or equal to the specific byte
+	optional_ptr<Node> GetNextChildMutable(uint8_t &byte);
+
+	//! Vacuum the children of the node
+	void Vacuum(ART &art, const ARTFlags &flags);
 };
 } // namespace duckdb

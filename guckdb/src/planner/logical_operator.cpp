@@ -2,27 +2,47 @@
 
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/tree_renderer.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/planner/operator/list.hpp"
+#include "duckdb/common/serializer/binary_serializer.hpp"
+#include "duckdb/common/serializer/binary_deserializer.hpp"
+#include "duckdb/common/serializer/memory_stream.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
+
+LogicalOperator::LogicalOperator(LogicalOperatorType type)
+    : type(type), op_mark(OpMark::NO_OP), estimated_cardinality(0), has_estimated_cardinality(false) {
+}
+
+LogicalOperator::LogicalOperator(LogicalOperatorType type, vector<unique_ptr<Expression>> expressions)
+    : type(type), op_mark(OpMark::NO_OP), expressions(std::move(expressions)), estimated_cardinality(0), has_estimated_cardinality(false) {
+}
+
+LogicalOperator::~LogicalOperator() {
+}
+
+vector<ColumnBinding> LogicalOperator::GetColumnBindings() {
+	return {ColumnBinding(0, 0)};
+}
+
+string LogicalOperator::GetName() const {
+	return LogicalOperatorToString(type);
+}
 
 string LogicalOperator::ParamsToString() const {
-	string result = "";
-	if (expressions.size() > 0) {
-		result += "[";
-		result += StringUtil::Join(expressions, expressions.size(), ", ",
-		                           [](const unique_ptr<Expression> &expression) { return expression->GetName(); });
-		result += "]";
+	string result;
+	for (idx_t i = 0; i < expressions.size(); i++) {
+		if (i > 0) {
+			result += "\n";
+		}
+		result += expressions[i]->GetName();
 	}
-
 	return result;
 }
 
 void LogicalOperator::ResolveOperatorTypes() {
-	// if (types.size() > 0) {
-	// 	// types already resolved for this node
-	// 	return;
-	// }
+
 	types.clear();
 	// first resolve child types
 	for (auto &child : children) {
@@ -30,21 +50,24 @@ void LogicalOperator::ResolveOperatorTypes() {
 	}
 	// now resolve the types for this operator
 	ResolveTypes();
+	D_ASSERT(types.size() == GetColumnBindings().size());
 }
 
 vector<ColumnBinding> LogicalOperator::GenerateColumnBindings(idx_t table_idx, idx_t column_count) {
 	vector<ColumnBinding> result;
+	result.reserve(column_count);
 	for (idx_t i = 0; i < column_count; i++) {
-		result.push_back(ColumnBinding(table_idx, i));
+		result.emplace_back(table_idx, i);
 	}
 	return result;
 }
 
-vector<TypeId> LogicalOperator::MapTypes(vector<TypeId> types, vector<idx_t> projection_map) {
-	if (projection_map.size() == 0) {
+vector<LogicalType> LogicalOperator::MapTypes(const vector<LogicalType> &types, const vector<idx_t> &projection_map) {
+	if (projection_map.empty()) {
 		return types;
 	} else {
-		vector<TypeId> result_types;
+		vector<LogicalType> result_types;
+		result_types.reserve(projection_map.size());
 		for (auto index : projection_map) {
 			result_types.push_back(types[index]);
 		}
@@ -52,55 +75,124 @@ vector<TypeId> LogicalOperator::MapTypes(vector<TypeId> types, vector<idx_t> pro
 	}
 }
 
-vector<ColumnBinding> LogicalOperator::MapBindings(vector<ColumnBinding> bindings, vector<idx_t> projection_map) {
-	if (projection_map.size() == 0) {
+vector<ColumnBinding> LogicalOperator::MapBindings(const vector<ColumnBinding> &bindings,
+                                                   const vector<idx_t> &projection_map) {
+	if (projection_map.empty()) {
 		return bindings;
 	} else {
 		vector<ColumnBinding> result_bindings;
+		result_bindings.reserve(projection_map.size());
 		for (auto index : projection_map) {
+			D_ASSERT(index < bindings.size());
 			result_bindings.push_back(bindings[index]);
 		}
 		return result_bindings;
 	}
 }
 
-string LogicalOperator::ToString(idx_t depth) const {
-	string result = LogicalOperatorToString(type);
-	result += ParamsToString();
-	if (children.size() > 0) {
-		for (idx_t i = 0; i < children.size(); i++) {
-			result += "\n" + string(depth * 4, ' ');
-			auto &child = children[i];
-			result += child->ToString(depth + 1);
+string LogicalOperator::ToString() const {
+	TreeRenderer renderer;
+	return renderer.ToString(*this);
+}
+
+void LogicalOperator::Verify(ClientContext &context) {
+#ifdef DEBUG
+	// verify expressions
+	for (idx_t expr_idx = 0; expr_idx < expressions.size(); expr_idx++) {
+		auto str = expressions[expr_idx]->ToString();
+		// verify that we can (correctly) copy this expression
+		auto copy = expressions[expr_idx]->Copy();
+		auto original_hash = expressions[expr_idx]->Hash();
+		auto copy_hash = copy->Hash();
+		// copy should be identical to original
+		D_ASSERT(expressions[expr_idx]->ToString() == copy->ToString());
+		D_ASSERT(original_hash == copy_hash);
+		D_ASSERT(Expression::Equals(expressions[expr_idx], copy));
+
+		for (idx_t other_idx = 0; other_idx < expr_idx; other_idx++) {
+			// comparison with other expressions
+			auto other_hash = expressions[other_idx]->Hash();
+			bool expr_equal = Expression::Equals(expressions[expr_idx], expressions[other_idx]);
+			if (original_hash != other_hash) {
+				// if the hashes are not equal the expressions should not be equal either
+				D_ASSERT(!expr_equal);
+			}
 		}
-		result += "";
+		D_ASSERT(!str.empty());
+
+		// verify that serialization + deserialization round-trips correctly
+		if (expressions[expr_idx]->HasParameter()) {
+			continue;
+		}
+		MemoryStream stream;
+		// We are serializing a query plan
+		try {
+			BinarySerializer::Serialize(*expressions[expr_idx], stream);
+		} catch (NotImplementedException &ex) {
+			// ignore for now (FIXME)
+			continue;
+		}
+		// Rewind the stream
+		stream.Rewind();
+
+		bound_parameter_map_t parameters;
+		auto deserialized_expression = BinaryDeserializer::Deserialize<Expression>(stream, context, parameters);
+
+		// FIXME: expressions might not be equal yet because of statistics propagation
+		continue;
+		D_ASSERT(Expression::Equals(expressions[expr_idx], deserialized_expression));
+		D_ASSERT(expressions[expr_idx]->Hash() == deserialized_expression->Hash());
 	}
-	return result;
+	D_ASSERT(!ToString().empty());
+	for (auto &child : children) {
+		child->Verify(context);
+	}
+#endif
 }
 
-static string ToJSONRecursive(const LogicalOperator &node) {
-	string result = "{ \"name\": \"" + LogicalOperatorToString(node.type) + "\",\n";
-	result += "\"timing\":" + StringUtil::Format("%.2f", 0) + ",\n";
-	result += "\"cardinality\":" + to_string(0) + ",\n";
-	result += "\"extra_info\": \"" + node.ParamsToString() + "\",\n";
-	result += "\"children\": [";
-	result += StringUtil::Join(node.children, node.children.size(), ",\n",
-	                           [](const unique_ptr<LogicalOperator> &child) { return ToJSONRecursive(*child); });
-	result += "]\n}\n";
-	return result;
+void LogicalOperator::AddChild(unique_ptr<LogicalOperator> child) {
+	D_ASSERT(child);
+	children.push_back(std::move(child));
 }
 
-string LogicalOperator::ToJSON() const {
-	string result = "{ \"result\": " + to_string(0.1) + ",\n";
-	// print the phase timings
-	result += "\"timings\": {},\n";
-	// recursively print the physical operator tree
-	result += "\"tree\": ";
-	result += ToJSONRecursive(*this);
-
-	return result + "}";
+idx_t LogicalOperator::EstimateCardinality(ClientContext &context) {
+	// simple estimator, just take the max of the children
+	if (has_estimated_cardinality) {
+		return estimated_cardinality;
+	}
+	idx_t max_cardinality = 0;
+	for (auto &child : children) {
+		max_cardinality = MaxValue(child->EstimateCardinality(context), max_cardinality);
+	}
+	has_estimated_cardinality = true;
+	estimated_cardinality = max_cardinality;
+	return estimated_cardinality;
 }
 
 void LogicalOperator::Print() {
 	Printer::Print(ToString());
 }
+
+vector<idx_t> LogicalOperator::GetTableIndex() const {
+	return vector<idx_t> {};
+}
+
+unique_ptr<LogicalOperator> LogicalOperator::Copy(ClientContext &context) const {
+	MemoryStream stream;
+	BinarySerializer serializer(stream);
+	try {
+		serializer.Begin();
+		this->Serialize(serializer);
+		serializer.End();
+	} catch (NotImplementedException &ex) {
+		throw NotImplementedException("Logical Operator Copy requires the logical operator and all of its children to "
+		                              "be serializable: " +
+		                              std::string(ex.what()));
+	}
+	stream.Rewind();
+	bound_parameter_map_t parameters;
+	auto op_copy = BinaryDeserializer::Deserialize<LogicalOperator>(stream, context, parameters);
+	return op_copy;
+}
+
+} // namespace duckdb

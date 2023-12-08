@@ -1,237 +1,630 @@
 #include "duckdb/execution/operator/join/physical_hash_join.hpp"
 
 #include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/aggregate/distributive_functions.hpp"
+#include "duckdb/function/function_binder.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/query_profiler.hpp"
+#include "duckdb/parallel/base_pipeline_event.hpp"
+#include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parallel/thread_context.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-class PhysicalHashJoinState : public PhysicalComparisonJoinState {
-public:
-	PhysicalHashJoinState(PhysicalOperator *left, PhysicalOperator *right, vector<JoinCondition> &conditions)
-	    : PhysicalComparisonJoinState(left, right, conditions), initialized(false) {
+PhysicalHashJoin::PhysicalHashJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
+                                   unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
+                                   const vector<idx_t> &left_projection_map,
+                                   const vector<idx_t> &right_projection_map_p, vector<LogicalType> delim_types,
+                                   idx_t estimated_cardinality, PerfectHashJoinStats perfect_join_stats)
+    : PhysicalComparisonJoin(op, PhysicalOperatorType::HASH_JOIN, std::move(cond), join_type, estimated_cardinality),
+      right_projection_map(right_projection_map_p), delim_types(std::move(delim_types)),
+      perfect_join_statistics(std::move(perfect_join_stats)) {
+
+	children.push_back(std::move(left));
+	children.push_back(std::move(right));
+
+	D_ASSERT(left_projection_map.empty());
+	for (auto &condition : conditions) {
+		condition_types.push_back(condition.left->return_type);
 	}
 
-	bool initialized;
-	DataChunk cached_chunk;
-	DataChunk join_keys;
-	unique_ptr<JoinHashTable::ScanStructure> scan_structure;
+	// for ANTI, SEMI and MARK join, we only need to store the keys, so for these the build types are empty
+	if (join_type != JoinType::ANTI && join_type != JoinType::SEMI && join_type != JoinType::MARK) {
+		build_types = LogicalOperator::MapTypes(children[1]->GetTypes(), right_projection_map);
+	}
+}
+
+PhysicalHashJoin::PhysicalHashJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
+                                   unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
+                                   idx_t estimated_cardinality, PerfectHashJoinStats perfect_join_state)
+    : PhysicalHashJoin(op, std::move(left), std::move(right), std::move(cond), join_type, {}, {}, {},
+                       estimated_cardinality, std::move(perfect_join_state)) {
+}
+
+//===--------------------------------------------------------------------===//
+// Sink
+//===--------------------------------------------------------------------===//
+class HashJoinGlobalSinkState : public GlobalSinkState {
+public:
+	HashJoinGlobalSinkState(const PhysicalHashJoin &op, ClientContext &context_p)
+	    : context(context_p), finalized(false), scanned_data(false) {
+		hash_table = op.InitializeHashTable(context);
+
+		// for perfect hash join
+		perfect_join_executor = make_uniq<PerfectHashJoinExecutor>(op, *hash_table, op.perfect_join_statistics);
+		// for external hash join
+		external = ClientConfig::GetConfig(context).force_external;
+		// Set probe types
+		const auto &payload_types = op.children[0]->types;
+		probe_types.insert(probe_types.end(), op.condition_types.begin(), op.condition_types.end());
+		probe_types.insert(probe_types.end(), payload_types.begin(), payload_types.end());
+		probe_types.emplace_back(LogicalType::HASH);
+	}
+
+	void ScheduleFinalize(Pipeline &pipeline, Event &event);
+	void InitializeProbeSpill();
+
+public:
+	ClientContext &context;
+	//! Global HT used by the join
+	unique_ptr<JoinHashTable> hash_table;
+	//! The perfect hash join executor (if any)
+	unique_ptr<PerfectHashJoinExecutor> perfect_join_executor;
+	//! Whether or not the hash table has been finalized
+	bool finalized = false;
+
+	//! Whether we are doing an external join
+	bool external;
+
+	//! Hash tables built by each thread
+	mutex lock;
+	vector<unique_ptr<JoinHashTable>> local_hash_tables;
+
+	//! Excess probe data gathered during Sink
+	vector<LogicalType> probe_types;
+	unique_ptr<JoinHashTable::ProbeSpill> probe_spill;
+
+	//! Whether or not we have started scanning data using GetData
+	atomic<bool> scanned_data;
 };
 
-PhysicalHashJoin::PhysicalHashJoin(ClientContext &context, LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                   unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
-                                   vector<idx_t> left_projection_map, vector<idx_t> right_projection_map)
-    : PhysicalComparisonJoin(op, PhysicalOperatorType::HASH_JOIN, move(cond), join_type),
-      right_projection_map(right_projection_map) {
-	children.push_back(move(left));
-	children.push_back(move(right));
+class HashJoinLocalSinkState : public LocalSinkState {
+public:
+	HashJoinLocalSinkState(const PhysicalHashJoin &op, ClientContext &context) : build_executor(context) {
+		auto &allocator = BufferAllocator::Get(context);
+		if (!op.right_projection_map.empty()) {
+			build_chunk.Initialize(allocator, op.build_types);
+		}
+		for (auto &cond : op.conditions) {
+			build_executor.AddExpression(*cond.right);
+		}
+		join_keys.Initialize(allocator, op.condition_types);
 
-	assert(left_projection_map.size() == 0);
+		hash_table = op.InitializeHashTable(context);
 
-	hash_table =
-	    make_unique<JoinHashTable>(BufferManager::GetBufferManager(context), conditions,
-	                               LogicalOperator::MapTypes(children[1]->GetTypes(), right_projection_map), type);
+		hash_table->GetSinkCollection().InitializeAppendState(append_state);
+	}
+
+public:
+	PartitionedTupleDataAppendState append_state;
+
+	DataChunk build_chunk;
+	DataChunk join_keys;
+	ExpressionExecutor build_executor;
+
+	//! Thread-local HT
+	unique_ptr<JoinHashTable> hash_table;
+};
+
+unique_ptr<JoinHashTable> PhysicalHashJoin::InitializeHashTable(ClientContext &context) const {
+	auto result =
+	    make_uniq<JoinHashTable>(BufferManager::GetBufferManager(context), conditions, build_types, join_type);
+	result->max_ht_size = double(0.6) * BufferManager::GetBufferManager(context).GetMaxMemory();
+	if (!delim_types.empty() && join_type == JoinType::MARK) {
+		// correlated MARK join
+		if (delim_types.size() + 1 == conditions.size()) {
+			// the correlated MARK join has one more condition than the amount of correlated columns
+			// this is the case in a correlated ANY() expression
+			// in this case we need to keep track of additional entries, namely:
+			// - (1) the total amount of elements per group
+			// - (2) the amount of non-null elements per group
+			// we need these to correctly deal with the cases of either:
+			// - (1) the group being empty [in which case the result is always false, even if the comparison is NULL]
+			// - (2) the group containing a NULL value [in which case FALSE becomes NULL]
+			auto &info = result->correlated_mark_join_info;
+
+			vector<LogicalType> payload_types;
+			vector<BoundAggregateExpression *> correlated_aggregates;
+			unique_ptr<BoundAggregateExpression> aggr;
+
+			// jury-rigging the GroupedAggregateHashTable
+			// we need a count_star and a count to get counts with and without NULLs
+
+			FunctionBinder function_binder(context);
+			aggr = function_binder.BindAggregateFunction(CountStarFun::GetFunction(), {}, nullptr,
+			                                             AggregateType::NON_DISTINCT);
+			correlated_aggregates.push_back(&*aggr);
+			payload_types.push_back(aggr->return_type);
+			info.correlated_aggregates.push_back(std::move(aggr));
+
+			auto count_fun = CountFun::GetFunction();
+			vector<unique_ptr<Expression>> children;
+			// this is a dummy but we need it to make the hash table understand whats going on
+			children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(count_fun.return_type, 0));
+			aggr = function_binder.BindAggregateFunction(count_fun, std::move(children), nullptr,
+			                                             AggregateType::NON_DISTINCT);
+			correlated_aggregates.push_back(&*aggr);
+			payload_types.push_back(aggr->return_type);
+			info.correlated_aggregates.push_back(std::move(aggr));
+
+			auto &allocator = BufferAllocator::Get(context);
+			info.correlated_counts = make_uniq<GroupedAggregateHashTable>(context, allocator, delim_types,
+			                                                              payload_types, correlated_aggregates);
+			info.correlated_types = delim_types;
+			info.group_chunk.Initialize(allocator, delim_types);
+			info.result_chunk.Initialize(allocator, payload_types);
+		}
+	}
+	return result;
 }
 
-PhysicalHashJoin::PhysicalHashJoin(ClientContext &context, LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                   unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type)
-    : PhysicalHashJoin(context, op, move(left), move(right), move(cond), join_type, {}, {}) {
+unique_ptr<GlobalSinkState> PhysicalHashJoin::GetGlobalSinkState(ClientContext &context) const {
+	return make_uniq<HashJoinGlobalSinkState>(*this, context);
 }
 
+unique_ptr<LocalSinkState> PhysicalHashJoin::GetLocalSinkState(ExecutionContext &context) const {
+	return make_uniq<HashJoinLocalSinkState>(*this, context.client);
+}
 
-void PhysicalHashJoin::BuildHashTable(ClientContext &context, PhysicalOperatorState *state_) {
-	auto state = reinterpret_cast<PhysicalHashJoinState *>(state_);
+SinkResultType PhysicalHashJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
+	auto &lstate = input.local_state.Cast<HashJoinLocalSinkState>();
+
+	// resolve the join keys for the right chunk
+	lstate.join_keys.Reset();
+	lstate.build_executor.Execute(chunk, lstate.join_keys);
 
 	// build the HT
-	auto right_state = children[1]->GetOperatorState();
-	auto types = children[1]->GetTypes();
-
-	DataChunk right_chunk, build_chunk;
-	right_chunk.Initialize(types);
-
-	if (right_projection_map.size() > 0) {
-		build_chunk.Initialize(hash_table->build_types);
+	auto &ht = *lstate.hash_table;
+	if (!right_projection_map.empty()) {
+		// there is a projection map: fill the build chunk with the projected columns
+		lstate.build_chunk.Reset();
+		lstate.build_chunk.SetCardinality(chunk);
+		for (idx_t i = 0; i < right_projection_map.size(); i++) {
+			lstate.build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
+		}
+		ht.Build(lstate.append_state, lstate.join_keys, lstate.build_chunk);
+	} else if (!build_types.empty()) {
+		// there is not a projected map: place the entire right chunk in the HT
+		ht.Build(lstate.append_state, lstate.join_keys, chunk);
+	} else {
+		// there are only keys: place an empty chunk in the payload
+		lstate.build_chunk.SetCardinality(chunk.size());
+		ht.Build(lstate.append_state, lstate.join_keys, lstate.build_chunk);
 	}
 
-	state->join_keys.Initialize(hash_table->condition_types);
-	while (true) {
-		// get the child chunk
-		children[1]->GetChunk(context, right_chunk, right_state.get());
-		if (right_chunk.size() == 0) {
-			break;
-		}
-		// resolve the join keys for the right chunk
-		state->rhs_executor.Execute(right_chunk, state->join_keys);
-		// build the HT
-		if (right_projection_map.size() > 0) {
-			// there is a projection map: fill the build chunk with the projected columns
-			build_chunk.Reset();
-			build_chunk.SetCardinality(right_chunk);
-			for (idx_t i = 0; i < right_projection_map.size(); i++) {
-				build_chunk.data[i].Reference(right_chunk.data[right_projection_map[i]]);
-			}
-			hash_table->Build(state->join_keys, build_chunk);
+	return SinkResultType::NEED_MORE_INPUT;
+}
+
+SinkCombineResultType PhysicalHashJoin::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
+	auto &gstate = input.global_state.Cast<HashJoinGlobalSinkState>();
+	auto &lstate = input.local_state.Cast<HashJoinLocalSinkState>();
+	if (lstate.hash_table) {
+		lstate.hash_table->GetSinkCollection().FlushAppendState(lstate.append_state);
+		lock_guard<mutex> local_ht_lock(gstate.lock);
+		gstate.local_hash_tables.push_back(std::move(lstate.hash_table));
+	}
+	auto &client_profiler = QueryProfiler::Get(context.client);
+	context.thread.profiler.Flush(*this, lstate.build_executor, "build_executor", 1);
+	client_profiler.Flush(context.thread.profiler);
+
+	return SinkCombineResultType::FINISHED;
+}
+
+string PhysicalHashJoin::GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, idx_t depth) const {
+        string join_str = AssignBlank(depth) + "\"hashJoin\": {\n";
+
+        string left_str = AssignBlank(++depth) + "\"left\": {\n";
+        string right_str = AssignBlank(depth) + "\"right\": {\n";
+
+        left_str += children[0]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
+        right_str += children[1]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
+
+        string type_str = AssignBlank(depth) + "\"type\": ";
+        type_str += "\"" + JoinTypeToString(this->join_type) + "\",\n";
+
+        string common_str = AssignBlank(depth) + "\"common\": {\n";
+        string emit_str = AssignBlank(++depth) + "\"emit\": {\n";
+        string output_mapping_str = AssignBlank(++depth) + "\"outputMapping\": ";
+
+        string select_right_str = "[\n";
+
+        ++depth;
+
+        for (int i = 0; i < right_projection_map.size(); ++i) {
+            select_right_str += AssignBlank(depth) + to_string(right_projection_map[i]);
+            if (i != right_projection_map.size() - 1) {
+                select_right_str += ",\n";
+            }
+            else {
+                select_right_str += "\n";
+            }
+        }
+        select_right_str += AssignBlank(--depth) + "]";
+        output_mapping_str += select_right_str + "\n";
+        emit_str += output_mapping_str + AssignBlank(--depth) + "}\n";
+        common_str += emit_str + AssignBlank(--depth) + "},\n";
+
+        string condition_str = "";
+        string left_condition_str = AssignBlank(depth) + "\"leftKeys\": [\n";
+        string right_condition_str = AssignBlank(depth) + "\"rightKeys\": [\n";
+
+        ++depth;
+
+        for (int i = 0; i < conditions.size(); ++i) {
+            BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
+            BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
+
+            left_condition_str += AssignBlank(depth) + "{\n";
+            left_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
+            left_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
+            left_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(lexp->index) + "\n";
+            left_condition_str += AssignBlank(--depth) + "}\n";
+            left_condition_str += AssignBlank(--depth) + "}\n";
+            left_condition_str += AssignBlank(--depth) + "}";
+
+            right_condition_str += AssignBlank(depth) + "{\n";
+            right_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
+            right_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
+            right_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(rexp->index) + "\n";
+            right_condition_str += AssignBlank(--depth) + "}\n";
+            right_condition_str += AssignBlank(--depth) + "}\n";
+            right_condition_str += AssignBlank(--depth) + "}";
+
+            if (i != conditions.size() - 1) {
+                left_condition_str += ",\n";
+                right_condition_str += ",\n";
+            }
+            else {
+                left_condition_str += "\n";
+                right_condition_str += "\n";
+            }
+        }
+
+        --depth;
+
+        left_condition_str += AssignBlank(depth) + "],\n";
+        right_condition_str += AssignBlank(depth) + "],\n";
+
+        condition_str += left_condition_str + right_condition_str;
+
+        join_str += left_str + right_str + type_str + common_str + condition_str + AssignBlank(--depth) + "}\n";
+
+        return join_str;
+    }
+
+substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
+        substrait::Rel* hash_join_rel = new substrait::Rel();
+        substrait::HashJoinRel* hash_join = new substrait::HashJoinRel();
+
+        hash_join->set_allocated_left(children[0]->ToSubstraitClass(tableid2name));
+        hash_join->set_allocated_right(children[1]->ToSubstraitClass(tableid2name));
+
+        substrait::RelCommon* common = new substrait::RelCommon();
+        substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
+
+        for (int i = 0; i < right_projection_map.size(); ++i) {
+            emit->add_output_mapping(right_projection_map[i]);
+        }
+
+        common->set_allocated_emit(emit);
+        hash_join->set_allocated_common(common);
+
+        if (this->join_type == JoinType::INNER)
+            hash_join->set_type(substrait::HashJoinRel_JoinType_JOIN_TYPE_INNER);
+        else if (this->join_type == JoinType::SINGLE)
+            hash_join->set_type(substrait::HashJoinRel_JoinType_JOIN_TYPE_SINGLE);
+
+        for (int i = 0; i < conditions.size(); ++i) {
+            BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
+            BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
+
+            substrait::Expression_FieldReference* field_reference_left = new substrait::Expression_FieldReference();
+            substrait::Expression_ReferenceSegment* direct_reference_left = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_MapKey* map_key_variable_left = new substrait::Expression_ReferenceSegment_MapKey();
+            substrait::Expression_Literal* variable_name_left = new substrait::Expression_Literal();
+            substrait::Expression_ReferenceSegment* child_variable_type_left = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_MapKey* map_key_type_left = new substrait::Expression_ReferenceSegment_MapKey();
+            substrait::Expression_Literal* type_left = new substrait::Expression_Literal();
+            substrait::Expression_ReferenceSegment* child_variable_index_left = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_StructField* field_variable_index_left = new substrait::Expression_ReferenceSegment_StructField();
+
+            field_variable_index_left->set_field(lexp->index);
+            child_variable_index_left->set_allocated_struct_field(field_variable_index_left);
+            string type_left_str = TypeIdToString(lexp->return_type.InternalType());
+            type_left->set_allocated_string(&type_left_str);
+            map_key_type_left->set_allocated_map_key(type_left);
+            map_key_type_left->set_allocated_child(child_variable_index_left);
+            child_variable_type_left->set_allocated_map_key(map_key_type_left);
+            variable_name_left->set_allocated_string(&lexp->alias);
+            map_key_variable_left->set_allocated_map_key(variable_name_left);
+            map_key_variable_left->set_allocated_child(child_variable_type_left);
+            direct_reference_left->set_allocated_map_key(map_key_variable_left);
+            field_reference_left->set_allocated_direct_reference(direct_reference_left);
+            *hash_join->add_left_keys() = *field_reference_left;
+            // hash_join->mutable_left_keys()->AddAllocated(field_reference_left);
+
+            substrait::Expression_FieldReference* field_reference_right = new substrait::Expression_FieldReference();
+            substrait::Expression_ReferenceSegment* direct_reference_right = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_MapKey* map_key_variable_right = new substrait::Expression_ReferenceSegment_MapKey();
+            substrait::Expression_Literal* variable_name_right = new substrait::Expression_Literal();
+            substrait::Expression_ReferenceSegment* child_variable_type_right = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_MapKey* map_key_type_right = new substrait::Expression_ReferenceSegment_MapKey();
+            substrait::Expression_Literal* type_right = new substrait::Expression_Literal();
+            substrait::Expression_ReferenceSegment* child_variable_index_right = new substrait::Expression_ReferenceSegment();
+            substrait::Expression_ReferenceSegment_StructField* field_variable_index_right = new substrait::Expression_ReferenceSegment_StructField();
+
+            field_variable_index_right->set_field(rexp->index);
+            child_variable_index_right->set_allocated_struct_field(field_variable_index_right);
+            string type_right_str = TypeIdToString(rexp->return_type.InternalType());
+            type_right->set_allocated_string(&type_right_str);
+            map_key_type_right->set_allocated_map_key(type_right);
+            map_key_type_right->set_allocated_child(child_variable_index_right);
+            child_variable_type_right->set_allocated_map_key(map_key_type_right);
+            variable_name_right->set_allocated_string(&rexp->alias);
+            map_key_variable_right->set_allocated_map_key(variable_name_right);
+            map_key_variable_right->set_allocated_child(child_variable_type_right);
+            direct_reference_right->set_allocated_map_key(map_key_variable_right);
+            field_reference_right->set_allocated_direct_reference(direct_reference_right);
+            *hash_join->add_right_keys() = *field_reference_right;
+            // hash_join->mutable_right_keys()->AddAllocated(field_reference_right);
+        }
+
+        for (int i = 0; i < types.size(); ++i)
+            hash_join->add_out_types(TypeIdToString(types[i].InternalType()));
+
+        hash_join_rel->set_allocated_hash_join(hash_join);
+
+        return hash_join_rel;
+    }
+
+
+//===--------------------------------------------------------------------===//
+// Finalize
+//===--------------------------------------------------------------------===//
+class HashJoinFinalizeTask : public ExecutorTask {
+public:
+	HashJoinFinalizeTask(shared_ptr<Event> event_p, ClientContext &context, HashJoinGlobalSinkState &sink_p,
+	                     idx_t chunk_idx_from_p, idx_t chunk_idx_to_p, bool parallel_p)
+	    : ExecutorTask(context), event(std::move(event_p)), sink(sink_p), chunk_idx_from(chunk_idx_from_p),
+	      chunk_idx_to(chunk_idx_to_p), parallel(parallel_p) {
+	}
+
+	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
+		sink.hash_table->Finalize(chunk_idx_from, chunk_idx_to, parallel);
+		event->FinishTask();
+		return TaskExecutionResult::TASK_FINISHED;
+	}
+
+private:
+	shared_ptr<Event> event;
+	HashJoinGlobalSinkState &sink;
+	idx_t chunk_idx_from;
+	idx_t chunk_idx_to;
+	bool parallel;
+};
+
+class HashJoinFinalizeEvent : public BasePipelineEvent {
+public:
+	HashJoinFinalizeEvent(Pipeline &pipeline_p, HashJoinGlobalSinkState &sink)
+	    : BasePipelineEvent(pipeline_p), sink(sink) {
+	}
+
+	HashJoinGlobalSinkState &sink;
+
+public:
+	void Schedule() override {
+		auto &context = pipeline->GetClientContext();
+
+		vector<shared_ptr<Task>> finalize_tasks;
+		auto &ht = *sink.hash_table;
+		const auto chunk_count = ht.GetDataCollection().ChunkCount();
+		const idx_t num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		if (num_threads == 1 || (ht.Count() < PARALLEL_CONSTRUCT_THRESHOLD && !context.config.verify_parallelism)) {
+			// Single-threaded finalize
+			finalize_tasks.push_back(
+			    make_uniq<HashJoinFinalizeTask>(shared_from_this(), context, sink, 0, chunk_count, false));
 		} else {
-			// there is not a projected map: place the entire right chunk in the HT
-			hash_table->Build(state->join_keys, right_chunk);
-		}
-	}
-	// auto build_finalize_start = std::chrono::high_resolution_clock::now();
-	hash_table->Finalize();
-	// auto build_finalize_end = std::chrono::high_resolution_clock::now();
-	// build_finalize_time += (build_finalize_end - build_finalize_start).count();
-}
+			// Parallel finalize
+			auto chunks_per_thread = MaxValue<idx_t>((chunk_count + num_threads - 1) / num_threads, 1);
 
-void PhysicalHashJoin::ProbeHashTable(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_) {
-	auto state = reinterpret_cast<PhysicalHashJoinState *>(state_);
-	if (state->child_chunk.size() > 0 && state->scan_structure) {
-		// still have elements remaining from the previous probe (i.e. we got
-		// >1024 elements in the previous probe)
-		// auto ht_next_start = std::chrono::high_resolution_clock::now();
-		state->scan_structure->Next(state->join_keys, state->child_chunk, chunk);
-		// auto ht_next_end = std::chrono::high_resolution_clock::now();
-		// ht_next_time += (ht_next_end - ht_next_start).count();
-		if (chunk.size() > 0) {
-			return;
-		}
-		state->scan_structure = nullptr;
-	}
-
-	// probe the HT
-	do {
-		// fetch the chunk from the left side
-		children[0]->GetChunk(context, state->child_chunk, state->child_state.get());
-		if (state->child_chunk.size() == 0) {
-			return;
-		}
-		// remove any selection vectors
-		if (hash_table->size() == 0) {
-			// empty hash table, special case
-			if (hash_table->join_type == JoinType::ANTI) {
-				// anti join with empty hash table, NOP join
-				// return the input
-				assert(chunk.column_count() == state->child_chunk.column_count());
-				chunk.Reference(state->child_chunk);
-				return;
-			} else if (hash_table->join_type == JoinType::MARK) {
-				// MARK join with empty hash table
-				assert(hash_table->join_type == JoinType::MARK);
-				assert(chunk.column_count() == state->child_chunk.column_count() + 1);
-				auto &result_vector = chunk.data.back();
-				assert(result_vector.type == TypeId::BOOL);
-				// for every data vector, we just reference the child chunk
-				chunk.SetCardinality(state->child_chunk);
-				for (idx_t i = 0; i < state->child_chunk.column_count(); i++) {
-					chunk.data[i].Reference(state->child_chunk.data[i]);
+			idx_t chunk_idx = 0;
+			for (idx_t thread_idx = 0; thread_idx < num_threads; thread_idx++) {
+				auto chunk_idx_from = chunk_idx;
+				auto chunk_idx_to = MinValue<idx_t>(chunk_idx_from + chunks_per_thread, chunk_count);
+				finalize_tasks.push_back(make_uniq<HashJoinFinalizeTask>(shared_from_this(), context, sink,
+				                                                         chunk_idx_from, chunk_idx_to, true));
+				chunk_idx = chunk_idx_to;
+				if (chunk_idx == chunk_count) {
+					break;
 				}
-				// for the MARK vector:
-				// if the HT has no NULL values (i.e. empty result set), return a vector that has false for every input
-				// entry if the HT has NULL values (i.e. result set had values, but all were NULL), return a vector that
-				// has NULL for every input entry
-				if (!hash_table->has_null) {
-					auto bool_result = FlatVector::GetData<bool>(result_vector);
-					for (idx_t i = 0; i < chunk.size(); i++) {
-						bool_result[i] = false;
-					}
-				} else {
-					FlatVector::Nullmask(result_vector).set();
-				}
-				return;
-			} else if (hash_table->join_type == JoinType::LEFT || hash_table->join_type == JoinType::OUTER ||
-			           hash_table->join_type == JoinType::SINGLE) {
-				// LEFT/FULL OUTER/SINGLE join and build side is empty
-				// for the LHS we reference the data
-				chunk.SetCardinality(state->child_chunk.size());
-				for (idx_t i = 0; i < state->child_chunk.column_count(); i++) {
-					chunk.data[i].Reference(state->child_chunk.data[i]);
-				}
-				// for the RHS
-				for (idx_t k = state->child_chunk.column_count(); k < chunk.column_count(); k++) {
-					chunk.data[k].vector_type = VectorType::CONSTANT_VECTOR;
-					ConstantVector::SetNull(chunk.data[k], true);
-				}
-				return;
 			}
 		}
-		// resolve the join keys for the left chunk
-		// auto ht_expression_start = std::chrono::high_resolution_clock::now();
-		state->lhs_executor.Execute(state->child_chunk, state->join_keys);
-
-		// perform the actual probe
-		// auto ht_probe_start = std::chrono::high_resolution_clock::now();
-		state->scan_structure = hash_table->Probe(state->join_keys);
-		// auto ht_probe_end = std::chrono::high_resolution_clock::now();
-		state->scan_structure->Next(state->join_keys, state->child_chunk, chunk);
-		// auto ht_next_end = std::chrono::high_resolution_clock::now();
-		// ht_expr_time += (ht_probe_start - ht_expression_start).count();
-		// ht_probe_time += (ht_probe_end - ht_probe_start).count();
-		// ht_next_time += (ht_next_end - ht_probe_end).count();
-	} while (chunk.size() == 0);
-}
-
-unique_ptr<PhysicalOperatorState> PhysicalHashJoin::GetOperatorState() {
-	return make_unique<PhysicalHashJoinState>(children[0].get(), children[1].get(), conditions);
-}
-
-void PhysicalHashJoin::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-                                        SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	auto state = reinterpret_cast<PhysicalHashJoinState *>(state_);
-	if (!state->initialized) {
-		// auto build_start = std::chrono::high_resolution_clock::now();
-		state->cached_chunk.Initialize(types);
-        if (hash_table->finalized)
-            hash_table->Initialize();
-		BuildHashTable(context, state_);
-		state->initialized = true;
-		// auto build_end = std::chrono::high_resolution_clock::now();
-		// build_time += (build_end - build_start).count();
-		if (hash_table->size() == 0 &&
-		    (hash_table->join_type == JoinType::INNER || hash_table->join_type == JoinType::SEMI)) {
-			// empty hash table with INNER or SEMI join means empty result set
-			return;
-		}
+		SetTasks(std::move(finalize_tasks));
 	}
-	do {
-		// auto probe_start = std::chrono::high_resolution_clock::now();
-		ProbeHashTable(context, chunk, state);
-		// auto probe_end = std::chrono::high_resolution_clock::now();
-		// probe_time += (probe_end - probe_start).count();
-#if STANDARD_VECTOR_SIZE >= 128
-		if (chunk.size() == 0) {
-			if (state->cached_chunk.size() > 0) {
-				// finished probing but cached data remains, return cached chunk
-				chunk.Reference(state->cached_chunk);
-				state->cached_chunk.Reset();
-			}
-			return;
-		} else if (chunk.size() < 64) {
-			// small chunk: add it to chunk cache and continue
-			state->cached_chunk.Append(chunk);
-			if (state->cached_chunk.size() >= (STANDARD_VECTOR_SIZE - 64)) {
-				// chunk cache full: return it
-				chunk.Reference(state->cached_chunk);
-				state->cached_chunk.Reset();
-				return;
-			} else {
-				// chunk cache not full: probe again
-				chunk.Reset();
-			}
-		} else {
-			return;
-		}
-#else
+
+	void FinishEvent() override {
+		sink.hash_table->GetDataCollection().VerifyEverythingPinned();
+		sink.hash_table->finalized = true;
+	}
+
+	static constexpr const idx_t PARALLEL_CONSTRUCT_THRESHOLD = 1048576;
+};
+
+void HashJoinGlobalSinkState::ScheduleFinalize(Pipeline &pipeline, Event &event) {
+	if (hash_table->Count() == 0) {
+		hash_table->finalized = true;
 		return;
-#endif
-	} while (true);
+	}
+	hash_table->InitializePointerTable();
+	auto new_event = make_shared<HashJoinFinalizeEvent>(pipeline, *this);
+	event.InsertEvent(std::move(new_event));
 }
 
-string PhysicalHashJoin::ExtraRenderInformation() const {
-	string extra_info = "HASH_JOIN[";
-	extra_info += JoinTypeToString(type);
-	extra_info += ", build: ";
-	extra_info +=
-	    to_string(right_projection_map.size() == 0 ? children[1]->GetTypes().size() : right_projection_map.size());
+void HashJoinGlobalSinkState::InitializeProbeSpill() {
+	lock_guard<mutex> guard(lock);
+	if (!probe_spill) {
+		probe_spill = make_uniq<JoinHashTable::ProbeSpill>(*hash_table, context, probe_types);
+	}
+}
+
+class HashJoinRepartitionTask : public ExecutorTask {
+public:
+	HashJoinRepartitionTask(shared_ptr<Event> event_p, ClientContext &context, JoinHashTable &global_ht,
+	                        JoinHashTable &local_ht)
+	    : ExecutorTask(context), event(std::move(event_p)), global_ht(global_ht), local_ht(local_ht) {
+	}
+
+	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
+		local_ht.Partition(global_ht);
+		event->FinishTask();
+		return TaskExecutionResult::TASK_FINISHED;
+	}
+
+private:
+	shared_ptr<Event> event;
+
+	JoinHashTable &global_ht;
+	JoinHashTable &local_ht;
+};
+
+class HashJoinPartitionEvent : public BasePipelineEvent {
+public:
+	HashJoinPartitionEvent(Pipeline &pipeline_p, HashJoinGlobalSinkState &sink,
+	                       vector<unique_ptr<JoinHashTable>> &local_hts)
+	    : BasePipelineEvent(pipeline_p), sink(sink), local_hts(local_hts) {
+	}
+
+	HashJoinGlobalSinkState &sink;
+	vector<unique_ptr<JoinHashTable>> &local_hts;
+
+public:
+	void Schedule() override {
+		auto &context = pipeline->GetClientContext();
+		vector<shared_ptr<Task>> partition_tasks;
+		partition_tasks.reserve(local_hts.size());
+		for (auto &local_ht : local_hts) {
+			partition_tasks.push_back(
+			    make_uniq<HashJoinRepartitionTask>(shared_from_this(), context, *sink.hash_table, *local_ht));
+		}
+		SetTasks(std::move(partition_tasks));
+	}
+
+	void FinishEvent() override {
+		local_hts.clear();
+		sink.hash_table->PrepareExternalFinalize();
+		sink.ScheduleFinalize(*pipeline, *this);
+	}
+};
+
+SinkFinalizeType PhysicalHashJoin::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+                                            OperatorSinkFinalizeInput &input) const {
+	auto &sink = input.global_state.Cast<HashJoinGlobalSinkState>();
+	auto &ht = *sink.hash_table;
+
+	sink.external = ht.RequiresExternalJoin(context.config, sink.local_hash_tables);
+	if (sink.external) {
+		sink.perfect_join_executor.reset();
+		if (ht.RequiresPartitioning(context.config, sink.local_hash_tables)) {
+			auto new_event = make_shared<HashJoinPartitionEvent>(pipeline, sink, sink.local_hash_tables);
+			event.InsertEvent(std::move(new_event));
+		} else {
+			for (auto &local_ht : sink.local_hash_tables) {
+				ht.Merge(*local_ht);
+			}
+			sink.local_hash_tables.clear();
+			sink.hash_table->PrepareExternalFinalize();
+			sink.ScheduleFinalize(pipeline, event);
+		}
+		sink.finalized = true;
+		return SinkFinalizeType::READY;
+	} else {
+		for (auto &local_ht : sink.local_hash_tables) {
+			ht.Merge(*local_ht);
+		}
+		sink.local_hash_tables.clear();
+		ht.Unpartition();
+	}
+
+	// check for possible perfect hash table
+	auto use_perfect_hash = sink.perfect_join_executor->CanDoPerfectHashJoin();
+	if (use_perfect_hash) {
+		D_ASSERT(ht.equality_types.size() == 1);
+		auto key_type = ht.equality_types[0];
+		use_perfect_hash = sink.perfect_join_executor->BuildPerfectHashTable(key_type);
+	}
+	// In case of a large build side or duplicates, use regular hash join
+	if (!use_perfect_hash) {
+		sink.perfect_join_executor.reset();
+		sink.ScheduleFinalize(pipeline, event);
+	}
+	sink.finalized = true;
+	if (ht.Count() == 0 && EmptyResultIfRHSIsEmpty()) {
+		return SinkFinalizeType::NO_OUTPUT_POSSIBLE;
+	}
+	return SinkFinalizeType::READY;
+}
+
+//===--------------------------------------------------------------------===//
+// Operator
+//===--------------------------------------------------------------------===//
+class HashJoinOperatorState : public CachingOperatorState {
+public:
+	explicit HashJoinOperatorState(ClientContext &context) : probe_executor(context), initialized(false) {
+	}
+
+	DataChunk join_keys;
+	ExpressionExecutor probe_executor;
+	unique_ptr<JoinHashTable::ScanStructure> scan_structure;
+	unique_ptr<OperatorState> perfect_hash_join_state;
+
+	bool initialized;
+	JoinHashTable::ProbeSpillLocalAppendState spill_state;
+	//! Chunk to sink data into for external join
+	DataChunk spill_chunk;
+
+public:
+	void Finalize(const PhysicalOperator &op, ExecutionContext &context) override {
+		context.thread.profiler.Flush(op, probe_executor, "probe_executor", 0);
+	}
+};
+
+unique_ptr<OperatorState> PhysicalHashJoin::GetOperatorState(ExecutionContext &context) const {
+	auto &allocator = BufferAllocator::Get(context.client);
+	auto &sink = sink_state->Cast<HashJoinGlobalSinkState>();
+	auto state = make_uniq<HashJoinOperatorState>(context.client);
+	if (sink.perfect_join_executor) {
+		state->perfect_hash_join_state = sink.perfect_join_executor->GetOperatorState(context);
+	} else {
+		state->join_keys.Initialize(allocator, condition_types);
+		for (auto &cond : conditions) {
+			state->probe_executor.AddExpression(*cond.left);
+		}
+	}
+	if (sink.external) {
+		state->spill_chunk.Initialize(allocator, sink.probe_types);
+		sink.InitializeProbeSpill();
+	}
+
+	return std::move(state);
+}
+
+string PhysicalHashJoin::ParamsToString() const {
+	string extra_info = EnumUtil::ToString(join_type) + "\n";
 
 	if (right_projection_map.empty()) {
 		extra_info += " empty ";
@@ -243,180 +636,482 @@ string PhysicalHashJoin::ExtraRenderInformation() const {
 		}
 	}
 
-	extra_info += "]\n";
 	for (auto &it : conditions) {
 		string op = ExpressionTypeToOperator(it.comparison);
 		BoundReferenceExpression* left = (BoundReferenceExpression*) it.left.get();
 		BoundReferenceExpression* right = (BoundReferenceExpression*) it.right.get();
 		extra_info += to_string(left->index) + op + to_string(right->index) + "--";
-		extra_info += it.left->GetName() + op + it.right->GetName() + "\n";
+		extra_info += it.left->GetName() + " " + op + " " + it.right->GetName() + "\n";
 	}
+	extra_info += "\n[INFOSEPARATOR]\n";
+	extra_info += StringUtil::Format("EC: %llu\n", estimated_cardinality);
 	return extra_info;
 }
 
-string PhysicalHashJoin::GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, duckdb::idx_t depth) const {
-	string join_str = AssignBlank(depth) + "\"hashJoin\": {\n";
+OperatorResultType PhysicalHashJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+                                                     GlobalOperatorState &gstate, OperatorState &state_p) const {
+	auto &state = state_p.Cast<HashJoinOperatorState>();
+	auto &sink = sink_state->Cast<HashJoinGlobalSinkState>();
+	D_ASSERT(sink.finalized);
+	D_ASSERT(!sink.scanned_data);
 
-	string left_str = AssignBlank(++depth) + "\"left\": {\n";
-	string right_str = AssignBlank(depth) + "\"right\": {\n";
-
-	left_str += children[0]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
-	right_str += children[1]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
-
-	string type_str = AssignBlank(depth) + "\"type\": ";
-	type_str += "\"" + JoinTypeToString(this->type) + "\",\n";
-
-	string common_str = AssignBlank(depth) + "\"common\": {\n";
-	string emit_str = AssignBlank(++depth) + "\"emit\": {\n";
-	string output_mapping_str = AssignBlank(++depth) + "\"outputMapping\": ";
-
-	string select_right_str = "[\n";
-
-	++depth;
-
-	for (int i = 0; i < right_projection_map.size(); ++i) {
-		select_right_str += AssignBlank(depth) + to_string(right_projection_map[i]);
-		if (i != right_projection_map.size() - 1) {
-			select_right_str += ",\n";
+	// some initialization for external hash join
+	if (sink.external && !state.initialized) {
+		if (!sink.probe_spill) {
+			sink.InitializeProbeSpill();
 		}
-		else {
-			select_right_str += "\n";
-		}
-	}
-	select_right_str += AssignBlank(--depth) + "]";
-	output_mapping_str += select_right_str + "\n";
-	emit_str += output_mapping_str + AssignBlank(--depth) + "}\n";
-	common_str += emit_str + AssignBlank(--depth) + "},\n";
-
-	string condition_str = "";
-	string left_condition_str = AssignBlank(depth) + "\"leftKeys\": [\n";
-	string right_condition_str = AssignBlank(depth) + "\"rightKeys\": [\n";
-
-	++depth;
-
-	for (int i = 0; i < conditions.size(); ++i) {
-		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
-		BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
-
-		left_condition_str += AssignBlank(depth) + "{\n";
-		left_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
-		left_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
-		left_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(lexp->index) + "\n";
-		left_condition_str += AssignBlank(--depth) + "}\n";
-		left_condition_str += AssignBlank(--depth) + "}\n";
-		left_condition_str += AssignBlank(--depth) + "}";
-
-		right_condition_str += AssignBlank(depth) + "{\n";
-		right_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
-		right_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
-		right_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(rexp->index) + "\n";
-		right_condition_str += AssignBlank(--depth) + "}\n";
-		right_condition_str += AssignBlank(--depth) + "}\n";
-		right_condition_str += AssignBlank(--depth) + "}";
-
-		if (i != conditions.size() - 1) {
-			left_condition_str += ",\n";
-			right_condition_str += ",\n";
-		}
-		else {
-			left_condition_str += "\n";
-			right_condition_str += "\n";
-		}
+		state.spill_state = sink.probe_spill->RegisterThread();
+		state.initialized = true;
 	}
 
-	--depth;
+	if (sink.hash_table->Count() == 0 && EmptyResultIfRHSIsEmpty()) {
+		return OperatorResultType::FINISHED;
+	}
 
-	left_condition_str += AssignBlank(depth) + "],\n";
-	right_condition_str += AssignBlank(depth) + "],\n";
+	if (sink.perfect_join_executor) {
+		D_ASSERT(!sink.external);
+		return sink.perfect_join_executor->ProbePerfectHashTable(context, input, chunk, *state.perfect_hash_join_state);
+	}
 
-	condition_str += left_condition_str + right_condition_str;
+	if (state.scan_structure) {
+		// still have elements remaining (i.e. we got >STANDARD_VECTOR_SIZE elements in the previous probe)
+		state.scan_structure->Next(state.join_keys, input, chunk);
+		if (chunk.size() > 0) {
+			return OperatorResultType::HAVE_MORE_OUTPUT;
+		}
+		state.scan_structure = nullptr;
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
 
-	join_str += left_str + right_str + type_str + common_str + condition_str + AssignBlank(--depth) + "}\n";
+	// probe the HT
+	if (sink.hash_table->Count() == 0) {
+		ConstructEmptyJoinResult(sink.hash_table->join_type, sink.hash_table->has_null, input, chunk);
+		return OperatorResultType::NEED_MORE_INPUT;
+	}
 
-	return join_str;
+	// resolve the join keys for the left chunk
+	state.join_keys.Reset();
+	state.probe_executor.Execute(input, state.join_keys);
+
+	// perform the actual probe
+	if (sink.external) {
+		state.scan_structure = sink.hash_table->ProbeAndSpill(state.join_keys, input, *sink.probe_spill,
+		                                                      state.spill_state, state.spill_chunk);
+	} else {
+		state.scan_structure = sink.hash_table->Probe(state.join_keys);
+	}
+	state.scan_structure->Next(state.join_keys, input, chunk);
+	return OperatorResultType::HAVE_MORE_OUTPUT;
 }
 
-substrait::Rel* PhysicalHashJoin::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
-	substrait::Rel* hash_join_rel = new substrait::Rel();
-	substrait::HashJoinRel* hash_join = new substrait::HashJoinRel();
+//===--------------------------------------------------------------------===//
+// Source
+//===--------------------------------------------------------------------===//
+enum class HashJoinSourceStage : uint8_t { INIT, BUILD, PROBE, SCAN_HT, DONE };
 
-	hash_join->set_allocated_left(children[0]->ToSubstraitClass(tableid2name));
-	hash_join->set_allocated_right(children[1]->ToSubstraitClass(tableid2name));
+class HashJoinLocalSourceState;
 
-	substrait::RelCommon* common = new substrait::RelCommon();
-	substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
+class HashJoinGlobalSourceState : public GlobalSourceState {
+public:
+	HashJoinGlobalSourceState(const PhysicalHashJoin &op, ClientContext &context);
 
-	for (int i = 0; i < right_projection_map.size(); ++i) {
-		emit->add_output_mapping(right_projection_map[i]);
+	//! Initialize this source state using the info in the sink
+	void Initialize(HashJoinGlobalSinkState &sink);
+	//! Try to prepare the next stage
+	void TryPrepareNextStage(HashJoinGlobalSinkState &sink);
+	//! Prepare the next build/probe/scan_ht stage for external hash join (must hold lock)
+	void PrepareBuild(HashJoinGlobalSinkState &sink);
+	void PrepareProbe(HashJoinGlobalSinkState &sink);
+	void PrepareScanHT(HashJoinGlobalSinkState &sink);
+	//! Assigns a task to a local source state
+	bool AssignTask(HashJoinGlobalSinkState &sink, HashJoinLocalSourceState &lstate);
+
+	idx_t MaxThreads() override {
+		D_ASSERT(op.sink_state);
+		auto &gstate = op.sink_state->Cast<HashJoinGlobalSinkState>();
+
+		idx_t count;
+		if (gstate.probe_spill) {
+			count = probe_count;
+		} else if (IsRightOuterJoin(op.join_type)) {
+			count = gstate.hash_table->Count();
+		} else {
+			return 0;
+		}
+		return count / ((idx_t)STANDARD_VECTOR_SIZE * parallel_scan_chunk_count);
 	}
 
-	common->set_allocated_emit(emit);
-	hash_join->set_allocated_common(common);
-    hash_join->set_type(JoinTypeToSubstraitHashJoinType(type));
+public:
+	const PhysicalHashJoin &op;
 
-	for (int i = 0; i < conditions.size(); ++i) {
-		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
-		BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
+	//! For synchronizing the external hash join
+	atomic<HashJoinSourceStage> global_stage;
+	mutex lock;
 
-		substrait::Expression_FieldReference* field_reference_left = new substrait::Expression_FieldReference();
-		substrait::Expression_ReferenceSegment* direct_reference_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_variable_left = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* variable_name_left = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_type_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_type_left = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* type_left = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_index_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_StructField* field_variable_index_left = new substrait::Expression_ReferenceSegment_StructField();
+	//! For HT build synchronization
+	idx_t build_chunk_idx;
+	idx_t build_chunk_count;
+	idx_t build_chunk_done;
+	idx_t build_chunks_per_thread;
 
-		field_variable_index_left->set_field(lexp->index);
-		child_variable_index_left->set_allocated_struct_field(field_variable_index_left);
-		string* type_left_str = new string(TypeIdToString(lexp->return_type));
-		type_left->set_allocated_string(type_left_str);
-		map_key_type_left->set_allocated_map_key(type_left);
-		map_key_type_left->set_allocated_child(child_variable_index_left);
-		child_variable_type_left->set_allocated_map_key(map_key_type_left);
-        string* alias_left_string = new string(lexp->alias);
-		variable_name_left->set_allocated_string(alias_left_string);
-		map_key_variable_left->set_allocated_map_key(variable_name_left);
-		map_key_variable_left->set_allocated_child(child_variable_type_left);
-		direct_reference_left->set_allocated_map_key(map_key_variable_left);
-		field_reference_left->set_allocated_direct_reference(direct_reference_left);
-		*hash_join->add_left_keys() = *field_reference_left;
-        delete field_reference_left;
-		// hash_join->mutable_left_keys()->AddAllocated(field_reference_left);
+	//! For probe synchronization
+	idx_t probe_chunk_count;
+	idx_t probe_chunk_done;
 
-		substrait::Expression_FieldReference* field_reference_right = new substrait::Expression_FieldReference();
-		substrait::Expression_ReferenceSegment* direct_reference_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_variable_right = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* variable_name_right = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_type_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_type_right = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* type_right = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_index_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_StructField* field_variable_index_right = new substrait::Expression_ReferenceSegment_StructField();
+	//! To determine the number of threads
+	idx_t probe_count;
+	idx_t parallel_scan_chunk_count;
 
-		field_variable_index_right->set_field(rexp->index);
-		child_variable_index_right->set_allocated_struct_field(field_variable_index_right);
-		string* type_right_str = new string(TypeIdToString(rexp->return_type));
-		type_right->set_allocated_string(type_right_str);
-		map_key_type_right->set_allocated_map_key(type_right);
-		map_key_type_right->set_allocated_child(child_variable_index_right);
-		child_variable_type_right->set_allocated_map_key(map_key_type_right);
-        string* alias_right_string = new string(rexp->alias);
-		variable_name_right->set_allocated_string(alias_right_string);
-		map_key_variable_right->set_allocated_map_key(variable_name_right);
-		map_key_variable_right->set_allocated_child(child_variable_type_right);
-		direct_reference_right->set_allocated_map_key(map_key_variable_right);
-		field_reference_right->set_allocated_direct_reference(direct_reference_right);
-		*hash_join->add_right_keys() = *field_reference_right;
-        delete field_reference_right;
-		// hash_join->mutable_right_keys()->AddAllocated(field_reference_right);
-	}
+	//! For full/outer synchronization
+	idx_t full_outer_chunk_idx;
+	idx_t full_outer_chunk_count;
+	idx_t full_outer_chunk_done;
+	idx_t full_outer_chunks_per_thread;
+};
 
-	for (int i = 0; i < types.size(); ++i)
-		hash_join->add_out_types(TypeIdToString(types[i]));
+class HashJoinLocalSourceState : public LocalSourceState {
+public:
+	HashJoinLocalSourceState(const PhysicalHashJoin &op, Allocator &allocator);
 
-	hash_join_rel->set_allocated_hash_join(hash_join);
+	//! Do the work this thread has been assigned
+	void ExecuteTask(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate, DataChunk &chunk);
+	//! Whether this thread has finished the work it has been assigned
+	bool TaskFinished();
+	//! Build, probe and scan for external hash join
+	void ExternalBuild(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate);
+	void ExternalProbe(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate, DataChunk &chunk);
+	void ExternalScanHT(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate, DataChunk &chunk);
 
-	return hash_join_rel;
+public:
+	//! The stage that this thread was assigned work for
+	HashJoinSourceStage local_stage;
+	//! Vector with pointers here so we don't have to re-initialize
+	Vector addresses;
+
+	//! Chunks assigned to this thread for building the pointer table
+	idx_t build_chunk_idx_from;
+	idx_t build_chunk_idx_to;
+
+	//! Local scan state for probe spill
+	ColumnDataConsumerScanState probe_local_scan;
+	//! Chunks for holding the scanned probe collection
+	DataChunk probe_chunk;
+	DataChunk join_keys;
+	DataChunk payload;
+	//! Column indices to easily reference the join keys/payload columns in probe_chunk
+	vector<idx_t> join_key_indices;
+	vector<idx_t> payload_indices;
+	//! Scan structure for the external probe
+	unique_ptr<JoinHashTable::ScanStructure> scan_structure;
+	bool empty_ht_probe_in_progress;
+
+	//! Chunks assigned to this thread for a full/outer scan
+	idx_t full_outer_chunk_idx_from;
+	idx_t full_outer_chunk_idx_to;
+	unique_ptr<JoinHTScanState> full_outer_scan_state;
+};
+
+unique_ptr<GlobalSourceState> PhysicalHashJoin::GetGlobalSourceState(ClientContext &context) const {
+	return make_uniq<HashJoinGlobalSourceState>(*this, context);
 }
+
+unique_ptr<LocalSourceState> PhysicalHashJoin::GetLocalSourceState(ExecutionContext &context,
+                                                                   GlobalSourceState &gstate) const {
+	return make_uniq<HashJoinLocalSourceState>(*this, BufferAllocator::Get(context.client));
+}
+
+HashJoinGlobalSourceState::HashJoinGlobalSourceState(const PhysicalHashJoin &op, ClientContext &context)
+    : op(op), global_stage(HashJoinSourceStage::INIT), build_chunk_count(0), build_chunk_done(0), probe_chunk_count(0),
+      probe_chunk_done(0), probe_count(op.children[0]->estimated_cardinality),
+      parallel_scan_chunk_count(context.config.verify_parallelism ? 1 : 120) {
+}
+
+void HashJoinGlobalSourceState::Initialize(HashJoinGlobalSinkState &sink) {
+	lock_guard<mutex> init_lock(lock);
+	if (global_stage != HashJoinSourceStage::INIT) {
+		// Another thread initialized
+		return;
+	}
+
+	// Finalize the probe spill
+	if (sink.probe_spill) {
+		sink.probe_spill->Finalize();
+	}
+
+	global_stage = HashJoinSourceStage::PROBE;
+	TryPrepareNextStage(sink);
+}
+
+void HashJoinGlobalSourceState::TryPrepareNextStage(HashJoinGlobalSinkState &sink) {
+	switch (global_stage.load()) {
+	case HashJoinSourceStage::BUILD:
+		if (build_chunk_done == build_chunk_count) {
+			sink.hash_table->GetDataCollection().VerifyEverythingPinned();
+			sink.hash_table->finalized = true;
+			PrepareProbe(sink);
+		}
+		break;
+	case HashJoinSourceStage::PROBE:
+		if (probe_chunk_done == probe_chunk_count) {
+			if (IsRightOuterJoin(op.join_type)) {
+				PrepareScanHT(sink);
+			} else {
+				PrepareBuild(sink);
+			}
+		}
+		break;
+	case HashJoinSourceStage::SCAN_HT:
+		if (full_outer_chunk_done == full_outer_chunk_count) {
+			PrepareBuild(sink);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void HashJoinGlobalSourceState::PrepareBuild(HashJoinGlobalSinkState &sink) {
+	D_ASSERT(global_stage != HashJoinSourceStage::BUILD);
+	auto &ht = *sink.hash_table;
+
+	// Try to put the next partitions in the block collection of the HT
+	if (!sink.external || !ht.PrepareExternalFinalize()) {
+		global_stage = HashJoinSourceStage::DONE;
+		return;
+	}
+
+	auto &data_collection = ht.GetDataCollection();
+	if (data_collection.Count() == 0 && op.EmptyResultIfRHSIsEmpty()) {
+		PrepareBuild(sink);
+		return;
+	}
+
+	build_chunk_idx = 0;
+	build_chunk_count = data_collection.ChunkCount();
+	build_chunk_done = 0;
+
+	auto num_threads = TaskScheduler::GetScheduler(sink.context).NumberOfThreads();
+	build_chunks_per_thread = MaxValue<idx_t>((build_chunk_count + num_threads - 1) / num_threads, 1);
+
+	ht.InitializePointerTable();
+
+	global_stage = HashJoinSourceStage::BUILD;
+}
+
+void HashJoinGlobalSourceState::PrepareProbe(HashJoinGlobalSinkState &sink) {
+	sink.probe_spill->PrepareNextProbe();
+	const auto &consumer = *sink.probe_spill->consumer;
+
+	probe_chunk_count = consumer.Count() == 0 ? 0 : consumer.ChunkCount();
+	probe_chunk_done = 0;
+
+	global_stage = HashJoinSourceStage::PROBE;
+	if (probe_chunk_count == 0) {
+		TryPrepareNextStage(sink);
+		return;
+	}
+}
+
+void HashJoinGlobalSourceState::PrepareScanHT(HashJoinGlobalSinkState &sink) {
+	D_ASSERT(global_stage != HashJoinSourceStage::SCAN_HT);
+	auto &ht = *sink.hash_table;
+
+	auto &data_collection = ht.GetDataCollection();
+	full_outer_chunk_idx = 0;
+	full_outer_chunk_count = data_collection.ChunkCount();
+	full_outer_chunk_done = 0;
+
+	auto num_threads = TaskScheduler::GetScheduler(sink.context).NumberOfThreads();
+	full_outer_chunks_per_thread = MaxValue<idx_t>((full_outer_chunk_count + num_threads - 1) / num_threads, 1);
+
+	global_stage = HashJoinSourceStage::SCAN_HT;
+}
+
+bool HashJoinGlobalSourceState::AssignTask(HashJoinGlobalSinkState &sink, HashJoinLocalSourceState &lstate) {
+	D_ASSERT(lstate.TaskFinished());
+
+	lock_guard<mutex> guard(lock);
+	switch (global_stage.load()) {
+	case HashJoinSourceStage::BUILD:
+		if (build_chunk_idx != build_chunk_count) {
+			lstate.local_stage = global_stage;
+			lstate.build_chunk_idx_from = build_chunk_idx;
+			build_chunk_idx = MinValue<idx_t>(build_chunk_count, build_chunk_idx + build_chunks_per_thread);
+			lstate.build_chunk_idx_to = build_chunk_idx;
+			return true;
+		}
+		break;
+	case HashJoinSourceStage::PROBE:
+		if (sink.probe_spill->consumer && sink.probe_spill->consumer->AssignChunk(lstate.probe_local_scan)) {
+			lstate.local_stage = global_stage;
+			lstate.empty_ht_probe_in_progress = false;
+			return true;
+		}
+		break;
+	case HashJoinSourceStage::SCAN_HT:
+		if (full_outer_chunk_idx != full_outer_chunk_count) {
+			lstate.local_stage = global_stage;
+			lstate.full_outer_chunk_idx_from = full_outer_chunk_idx;
+			full_outer_chunk_idx =
+			    MinValue<idx_t>(full_outer_chunk_count, full_outer_chunk_idx + full_outer_chunks_per_thread);
+			lstate.full_outer_chunk_idx_to = full_outer_chunk_idx;
+			return true;
+		}
+		break;
+	case HashJoinSourceStage::DONE:
+		break;
+	default:
+		throw InternalException("Unexpected HashJoinSourceStage in AssignTask!");
+	}
+	return false;
+}
+
+HashJoinLocalSourceState::HashJoinLocalSourceState(const PhysicalHashJoin &op, Allocator &allocator)
+    : local_stage(HashJoinSourceStage::INIT), addresses(LogicalType::POINTER) {
+	auto &chunk_state = probe_local_scan.current_chunk_state;
+	chunk_state.properties = ColumnDataScanProperties::ALLOW_ZERO_COPY;
+
+	auto &sink = op.sink_state->Cast<HashJoinGlobalSinkState>();
+	probe_chunk.Initialize(allocator, sink.probe_types);
+	join_keys.Initialize(allocator, op.condition_types);
+	payload.Initialize(allocator, op.children[0]->types);
+
+	// Store the indices of the columns to reference them easily
+	idx_t col_idx = 0;
+	for (; col_idx < op.condition_types.size(); col_idx++) {
+		join_key_indices.push_back(col_idx);
+	}
+	for (; col_idx < sink.probe_types.size() - 1; col_idx++) {
+		payload_indices.push_back(col_idx);
+	}
+}
+
+void HashJoinLocalSourceState::ExecuteTask(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate,
+                                           DataChunk &chunk) {
+	switch (local_stage) {
+	case HashJoinSourceStage::BUILD:
+		ExternalBuild(sink, gstate);
+		break;
+	case HashJoinSourceStage::PROBE:
+		ExternalProbe(sink, gstate, chunk);
+		break;
+	case HashJoinSourceStage::SCAN_HT:
+		ExternalScanHT(sink, gstate, chunk);
+		break;
+	default:
+		throw InternalException("Unexpected HashJoinSourceStage in ExecuteTask!");
+	}
+}
+
+bool HashJoinLocalSourceState::TaskFinished() {
+	switch (local_stage) {
+	case HashJoinSourceStage::INIT:
+	case HashJoinSourceStage::BUILD:
+		return true;
+	case HashJoinSourceStage::PROBE:
+		return scan_structure == nullptr && !empty_ht_probe_in_progress;
+	case HashJoinSourceStage::SCAN_HT:
+		return full_outer_scan_state == nullptr;
+	default:
+		throw InternalException("Unexpected HashJoinSourceStage in TaskFinished!");
+	}
+}
+
+void HashJoinLocalSourceState::ExternalBuild(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate) {
+	D_ASSERT(local_stage == HashJoinSourceStage::BUILD);
+
+	auto &ht = *sink.hash_table;
+	ht.Finalize(build_chunk_idx_from, build_chunk_idx_to, true);
+
+	lock_guard<mutex> guard(gstate.lock);
+	gstate.build_chunk_done += build_chunk_idx_to - build_chunk_idx_from;
+}
+
+void HashJoinLocalSourceState::ExternalProbe(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate,
+                                             DataChunk &chunk) {
+	D_ASSERT(local_stage == HashJoinSourceStage::PROBE && sink.hash_table->finalized);
+
+	if (scan_structure) {
+		// Still have elements remaining (i.e. we got >STANDARD_VECTOR_SIZE elements in the previous probe)
+		scan_structure->Next(join_keys, payload, chunk);
+		if (chunk.size() != 0) {
+			return;
+		}
+	}
+
+	if (scan_structure || empty_ht_probe_in_progress) {
+		// Previous probe is done
+		scan_structure = nullptr;
+		empty_ht_probe_in_progress = false;
+		sink.probe_spill->consumer->FinishChunk(probe_local_scan);
+		lock_guard<mutex> lock(gstate.lock);
+		gstate.probe_chunk_done++;
+		return;
+	}
+
+	// Scan input chunk for next probe
+	sink.probe_spill->consumer->ScanChunk(probe_local_scan, probe_chunk);
+
+	// Get the probe chunk columns/hashes
+	join_keys.ReferenceColumns(probe_chunk, join_key_indices);
+	payload.ReferenceColumns(probe_chunk, payload_indices);
+	auto precomputed_hashes = &probe_chunk.data.back();
+
+	if (sink.hash_table->Count() == 0 && !gstate.op.EmptyResultIfRHSIsEmpty()) {
+		gstate.op.ConstructEmptyJoinResult(sink.hash_table->join_type, sink.hash_table->has_null, payload, chunk);
+		empty_ht_probe_in_progress = true;
+		return;
+	}
+
+	// Perform the probe
+	scan_structure = sink.hash_table->Probe(join_keys, precomputed_hashes);
+	scan_structure->Next(join_keys, payload, chunk);
+}
+
+void HashJoinLocalSourceState::ExternalScanHT(HashJoinGlobalSinkState &sink, HashJoinGlobalSourceState &gstate,
+                                              DataChunk &chunk) {
+	D_ASSERT(local_stage == HashJoinSourceStage::SCAN_HT);
+
+	if (!full_outer_scan_state) {
+		full_outer_scan_state = make_uniq<JoinHTScanState>(sink.hash_table->GetDataCollection(),
+		                                                   full_outer_chunk_idx_from, full_outer_chunk_idx_to);
+	}
+	sink.hash_table->ScanFullOuter(*full_outer_scan_state, addresses, chunk);
+
+	if (chunk.size() == 0) {
+		full_outer_scan_state = nullptr;
+		lock_guard<mutex> guard(gstate.lock);
+		gstate.full_outer_chunk_done += full_outer_chunk_idx_to - full_outer_chunk_idx_from;
+	}
+}
+
+SourceResultType PhysicalHashJoin::GetData(ExecutionContext &context, DataChunk &chunk,
+                                           OperatorSourceInput &input) const {
+	auto &sink = sink_state->Cast<HashJoinGlobalSinkState>();
+	auto &gstate = input.global_state.Cast<HashJoinGlobalSourceState>();
+	auto &lstate = input.local_state.Cast<HashJoinLocalSourceState>();
+	sink.scanned_data = true;
+
+	if (!sink.external && !IsRightOuterJoin(join_type)) {
+		return SourceResultType::FINISHED;
+	}
+
+	if (gstate.global_stage == HashJoinSourceStage::INIT) {
+		gstate.Initialize(sink);
+	}
+
+	// Any call to GetData must produce tuples, otherwise the pipeline executor thinks that we're done
+	// Therefore, we loop until we've produced tuples, or until the operator is actually done
+	while (gstate.global_stage != HashJoinSourceStage::DONE && chunk.size() == 0) {
+		if (!lstate.TaskFinished() || gstate.AssignTask(sink, lstate)) {
+			lstate.ExecuteTask(sink, gstate, chunk);
+		} else {
+			lock_guard<mutex> guard(gstate.lock);
+			gstate.TryPrepareNextStage(sink);
+		}
+	}
+
+	return chunk.size() == 0 ? SourceResultType::FINISHED : SourceResultType::HAVE_MORE_OUTPUT;
+}
+
+} // namespace duckdb

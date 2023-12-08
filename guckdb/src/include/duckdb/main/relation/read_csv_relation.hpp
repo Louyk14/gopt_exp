@@ -8,24 +8,25 @@
 
 #pragma once
 
-#include "duckdb/main/relation.hpp"
+#include "duckdb/execution/operator/scan/csv/csv_reader_options.hpp"
+#include "duckdb/main/relation/table_function_relation.hpp"
 
 namespace duckdb {
 
-class ReadCSVRelation : public Relation {
-public:
-	ReadCSVRelation(ClientContext &context, string csv_file, vector<ColumnDefinition> columns, string alias = string());
+struct CSVReaderOptions;
 
-	string csv_file;
+class ReadCSVRelation : public TableFunctionRelation {
+public:
+	ReadCSVRelation(const shared_ptr<ClientContext> &context, const string &csv_file, vector<ColumnDefinition> columns,
+	                string alias = string());
+	ReadCSVRelation(const shared_ptr<ClientContext> &context, const string &csv_file, CSVReaderOptions options,
+	                string alias = string());
+
 	string alias;
-	vector<ColumnDefinition> columns;
+	bool auto_detect;
 
 public:
-	unique_ptr<QueryNode> GetQueryNode() override;
-	const vector<ColumnDefinition> &Columns() override;
-	string ToString(idx_t depth) override;
 	string GetAlias() override;
-	unique_ptr<TableRef> GetTableRef() override;
 };
 
 } // namespace duckdb

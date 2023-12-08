@@ -1,11 +1,13 @@
 #include "duckdb/execution/operator/scan/physical_dummy_scan.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-void PhysicalDummyScan::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state,
-                                         SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	state->finished = true;
+SourceResultType PhysicalDummyScan::GetData(ExecutionContext &context, DataChunk &chunk,
+                                            OperatorSourceInput &input) const {
 	// return a single row on the first call to the dummy scan
 	chunk.SetCardinality(1);
+
+	return SourceResultType::FINISHED;
 }
+
+} // namespace duckdb

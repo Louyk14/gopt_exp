@@ -1,52 +1,67 @@
 #include "duckdb/parser/tableref.hpp"
 
 #include "duckdb/common/printer.hpp"
-#include "duckdb/common/serializer.hpp"
 #include "duckdb/parser/tableref/list.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/common/to_string.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-void TableRef::Serialize(Serializer &serializer) {
-	serializer.Write<TableReferenceType>(type);
-	serializer.WriteString(alias);
+string TableRef::BaseToString(string result) const {
+	vector<string> column_name_alias;
+	return BaseToString(std::move(result), column_name_alias);
 }
 
-//! Deserializes a blob back into an TableRef
-unique_ptr<TableRef> TableRef::Deserialize(Deserializer &source) {
-	auto type = source.Read<TableReferenceType>();
-	auto alias = source.Read<string>();
-	unique_ptr<TableRef> result;
-	switch (type) {
-	case TableReferenceType::BASE_TABLE:
-		result = BaseTableRef::Deserialize(source);
-		break;
-	case TableReferenceType::CROSS_PRODUCT:
-		result = CrossProductRef::Deserialize(source);
-		break;
-	case TableReferenceType::JOIN:
-		result = JoinRef::Deserialize(source);
-		break;
-	case TableReferenceType::SUBQUERY:
-		result = SubqueryRef::Deserialize(source);
-		break;
-	case TableReferenceType::TABLE_FUNCTION:
-		result = TableFunctionRef::Deserialize(source);
-		break;
-	case TableReferenceType::EMPTY:
-		result = EmptyTableRef::Deserialize(source);
-		break;
-	case TableReferenceType::EXPRESSION_LIST:
-		result = ExpressionListRef::Deserialize(source);
-		break;
-	case TableReferenceType::CTE:
-	case TableReferenceType::INVALID:
-		return nullptr;
+string TableRef::BaseToString(string result, const vector<string> &column_name_alias) const {
+	if (!alias.empty()) {
+		result += StringUtil::Format(" AS %s", SQLIdentifier(alias));
 	}
-	result->alias = alias;
+	if (!column_name_alias.empty()) {
+		D_ASSERT(!alias.empty());
+		result += "(";
+		for (idx_t i = 0; i < column_name_alias.size(); i++) {
+			if (i > 0) {
+				result += ", ";
+			}
+			result += KeywordHelper::WriteOptionallyQuoted(column_name_alias[i]);
+		}
+		result += ")";
+	}
+	if (sample) {
+		result += " TABLESAMPLE " + EnumUtil::ToString(sample->method);
+		result += "(" + sample->sample_size.ToString() + " " + string(sample->is_percentage ? "PERCENT" : "ROWS") + ")";
+		if (sample->seed >= 0) {
+			result += "REPEATABLE (" + to_string(sample->seed) + ")";
+		}
+	}
+
 	return result;
+}
+
+bool TableRef::Equals(const TableRef &other) const {
+	return type == other.type && alias == other.alias && SampleOptions::Equals(sample.get(), other.sample.get());
+}
+
+void TableRef::CopyProperties(TableRef &target) const {
+	D_ASSERT(type == target.type);
+	target.alias = alias;
+	target.query_location = query_location;
+	target.sample = sample ? sample->Copy() : nullptr;
 }
 
 void TableRef::Print() {
 	Printer::Print(ToString());
 }
+
+bool TableRef::Equals(const unique_ptr<TableRef> &left, const unique_ptr<TableRef> &right) {
+	if (left.get() == right.get()) {
+		return true;
+	}
+	if (!left || !right) {
+		return false;
+	}
+	return left->Equals(*right);
+}
+
+} // namespace duckdb

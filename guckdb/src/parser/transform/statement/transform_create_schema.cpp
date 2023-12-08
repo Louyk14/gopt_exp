@@ -2,31 +2,31 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/transformer.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-unique_ptr<CreateStatement> Transformer::TransformCreateSchema(PGNode *node) {
-	auto stmt = reinterpret_cast<PGCreateSchemaStmt *>(node);
-	assert(stmt);
-	auto result = make_unique<CreateStatement>();
-	auto info = make_unique<CreateSchemaInfo>();
+unique_ptr<CreateStatement> Transformer::TransformCreateSchema(duckdb_libpgquery::PGCreateSchemaStmt &stmt) {
+	auto result = make_uniq<CreateStatement>();
+	auto info = make_uniq<CreateSchemaInfo>();
 
-	assert(stmt->schemaname);
-	info->schema = stmt->schemaname;
-	info->on_conflict = stmt->if_not_exists ? OnCreateConflict::IGNORE : OnCreateConflict::ERROR;
+	D_ASSERT(stmt.schemaname);
+	info->catalog = stmt.catalogname ? stmt.catalogname : INVALID_CATALOG;
+	info->schema = stmt.schemaname;
+	info->on_conflict = TransformOnConflict(stmt.onconflict);
 
-	if (stmt->schemaElts) {
+	if (stmt.schemaElts) {
 		// schema elements
-		for (auto cell = stmt->schemaElts->head; cell != nullptr; cell = cell->next) {
-			auto node = reinterpret_cast<PGNode *>(cell->data.ptr_value);
+		for (auto cell = stmt.schemaElts->head; cell != nullptr; cell = cell->next) {
+			auto node = PGPointerCast<duckdb_libpgquery::PGNode>(cell->data.ptr_value);
 			switch (node->type) {
-			case T_PGCreateStmt:
-			case T_PGViewStmt:
+			case duckdb_libpgquery::T_PGCreateStmt:
+			case duckdb_libpgquery::T_PGViewStmt:
 			default:
 				throw NotImplementedException("Schema element not supported yet!");
 			}
 		}
 	}
-	result->info = move(info);
+	result->info = std::move(info);
 	return result;
 }
+
+} // namespace duckdb

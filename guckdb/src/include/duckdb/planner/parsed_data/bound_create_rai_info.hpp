@@ -22,11 +22,11 @@ struct BoundCreateRAIInfo : public BoundCreateInfo {
 	string name;
 	unique_ptr<BoundTableRef> table;
 	RAIDirection rai_direction;
-	vector<unique_ptr<BoundTableRef>> referenced_tables;
-	vector<unique_ptr<Expression>> columns;
-	vector<unique_ptr<Expression>> references;
-	vector<column_t> base_column_ids;
-	vector<column_t> referenced_column_ids;
+	std::vector<unique_ptr<BoundTableRef>> referenced_tables;
+	std::vector<unique_ptr<Expression>> columns;
+	std::vector<unique_ptr<Expression>> references;
+	std::vector<column_t> base_column_ids;
+	std::vector<column_t> referenced_column_ids;
 	unique_ptr<LogicalOperator> plan;
 };
 } // namespace duckdb

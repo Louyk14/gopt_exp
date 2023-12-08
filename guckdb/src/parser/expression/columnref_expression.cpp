@@ -1,58 +1,99 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 
-#include "duckdb/common/exception.hpp"
-#include "duckdb/common/serializer.hpp"
 #include "duckdb/common/types/hash.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
-using namespace duckdb;
-using namespace std;
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
-//! Specify both the column and table name
-ColumnRefExpression::ColumnRefExpression(string column_name, string table_name)
-    : ParsedExpression(ExpressionType::COLUMN_REF, ExpressionClass::COLUMN_REF), column_name(column_name),
-      table_name(table_name) {
+namespace duckdb {
+
+ColumnRefExpression::ColumnRefExpression() : ParsedExpression(ExpressionType::COLUMN_REF, ExpressionClass::COLUMN_REF) {
 }
 
-ColumnRefExpression::ColumnRefExpression(string column_name) : ColumnRefExpression(column_name, string()) {
+ColumnRefExpression::ColumnRefExpression(string column_name, string table_name)
+    : ColumnRefExpression(table_name.empty() ? vector<string>{std::move(column_name)}
+                                             : [](string col, string tab) {
+                                                    vector<string> input(1, std::move(tab));
+                                                    input.push_back(col);
+                                                    return input;
+                                                } (column_name, table_name)) {
+}
+
+ColumnRefExpression::ColumnRefExpression(string column_name)
+    : ColumnRefExpression(vector<string>(1, std::move(column_name))) { //ColumnRefExpression(vector<string> {std::move(column_name)}) {
+}
+
+ColumnRefExpression::ColumnRefExpression(vector<string> column_names_p)
+    : ParsedExpression(ExpressionType::COLUMN_REF, ExpressionClass::COLUMN_REF),
+      column_names(std::move(column_names_p)) {
+#ifdef DEBUG
+	for (auto &col_name : column_names) {
+		D_ASSERT(!col_name.empty());
+	}
+#endif
+}
+
+bool ColumnRefExpression::IsQualified() const {
+	return column_names.size() > 1;
+}
+
+const string &ColumnRefExpression::GetColumnName() const {
+	D_ASSERT(column_names.size() <= 4);
+	return column_names.back();
+}
+
+const string &ColumnRefExpression::GetTableName() const {
+	D_ASSERT(column_names.size() >= 2 && column_names.size() <= 4);
+	if (column_names.size() == 4) {
+		return column_names[2];
+	}
+	if (column_names.size() == 3) {
+		return column_names[1];
+	}
+	return column_names[0];
 }
 
 string ColumnRefExpression::GetName() const {
-	return !alias.empty() ? alias : column_name;
+	return !alias.empty() ? alias : column_names.back();
 }
 
 string ColumnRefExpression::ToString() const {
-	if (table_name.empty()) {
-		return column_name;
-	} else {
-		return table_name + "." + column_name;
+	string result;
+	for (idx_t i = 0; i < column_names.size(); i++) {
+		if (i > 0) {
+			result += ".";
+		}
+		result += KeywordHelper::WriteOptionallyQuoted(column_names[i]);
 	}
+	return result;
 }
 
-bool ColumnRefExpression::Equals(const ColumnRefExpression *a, const ColumnRefExpression *b) {
-	return a->column_name == b->column_name && a->table_name == b->table_name;
+bool ColumnRefExpression::Equal(const ColumnRefExpression &a, const ColumnRefExpression &b) {
+	if (a.column_names.size() != b.column_names.size()) {
+		return false;
+	}
+	for (idx_t i = 0; i < a.column_names.size(); i++) {
+		if (!StringUtil::CIEquals(a.column_names[i], b.column_names[i])) {
+			return false;
+		}
+	}
+	return true;
 }
 
 hash_t ColumnRefExpression::Hash() const {
 	hash_t result = ParsedExpression::Hash();
-	result = CombineHash(result, duckdb::Hash<const char *>(column_name.c_str()));
+	for (auto &column_name : column_names) {
+		result = CombineHash(result, StringUtil::CIHash(column_name));
+	}
 	return result;
 }
 
 unique_ptr<ParsedExpression> ColumnRefExpression::Copy() const {
-	auto copy = make_unique<ColumnRefExpression>(column_name, table_name);
+	auto copy = make_uniq<ColumnRefExpression>(column_names);
 	copy->CopyProperties(*this);
-	return move(copy);
+	return std::move(copy);
 }
 
-void ColumnRefExpression::Serialize(Serializer &serializer) {
-	ParsedExpression::Serialize(serializer);
-	serializer.WriteString(table_name);
-	serializer.WriteString(column_name);
-}
-
-unique_ptr<ParsedExpression> ColumnRefExpression::Deserialize(ExpressionType type, Deserializer &source) {
-	auto table_name = source.Read<string>();
-	auto column_name = source.Read<string>();
-	auto expression = make_unique<ColumnRefExpression>(column_name, table_name);
-	return move(expression);
-}
+} // namespace duckdb

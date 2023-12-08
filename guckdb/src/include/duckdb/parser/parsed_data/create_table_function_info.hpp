@@ -8,20 +8,21 @@
 
 #pragma once
 
-#include "duckdb/parser/parsed_data/create_info.hpp"
-#include "duckdb/function/table_function.hpp"
+#include "duckdb/parser/parsed_data/create_function_info.hpp"
+#include "duckdb/function/function_set.hpp"
 
 namespace duckdb {
 
-struct CreateTableFunctionInfo : public CreateInfo {
-	CreateTableFunctionInfo(TableFunction function) : CreateInfo(CatalogType::TABLE_FUNCTION), function(function) {
-		this->name = function.name;
-	}
+struct CreateTableFunctionInfo : public CreateFunctionInfo {
+	DUCKDB_API explicit CreateTableFunctionInfo(TableFunction function);
+	DUCKDB_API explicit CreateTableFunctionInfo(TableFunctionSet set);
 
-	//! Function name
-	string name;
-	//! The table function
-	TableFunction function;
+	//! The table functions
+	TableFunctionSet functions;
+
+public:
+	DUCKDB_API unique_ptr<CreateInfo> Copy() const override;
+	DUCKDB_API unique_ptr<AlterInfo> GetAlterInfo() const override;
 };
 
 } // namespace duckdb

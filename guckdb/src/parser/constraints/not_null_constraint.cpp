@@ -1,24 +1,19 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
-#include "duckdb/common/serializer.hpp"
+namespace duckdb {
 
-using namespace std;
-using namespace duckdb;
+NotNullConstraint::NotNullConstraint(LogicalIndex index) : Constraint(ConstraintType::NOT_NULL), index(index) {
+}
+
+NotNullConstraint::~NotNullConstraint() {
+}
 
 string NotNullConstraint::ToString() const {
-	return "NOT NULL Constraint";
+	return "NOT NULL";
 }
 
-unique_ptr<Constraint> NotNullConstraint::Copy() {
-	return make_unique<NotNullConstraint>(index);
+unique_ptr<Constraint> NotNullConstraint::Copy() const {
+	return make_uniq<NotNullConstraint>(index);
 }
 
-void NotNullConstraint::Serialize(Serializer &serializer) {
-	Constraint::Serialize(serializer);
-	serializer.Write<idx_t>(index);
-}
-
-unique_ptr<Constraint> NotNullConstraint::Deserialize(Deserializer &source) {
-	auto index = source.Read<idx_t>();
-	return make_unique_base<Constraint, NotNullConstraint>(index);
-}
+} // namespace duckdb

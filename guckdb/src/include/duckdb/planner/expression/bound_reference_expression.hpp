@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/planner/column_binding.hpp"
 #include "duckdb/planner/expression.hpp"
 
 namespace duckdb {
@@ -16,11 +15,14 @@ namespace duckdb {
 //! A BoundReferenceExpression represents a physical index into a DataChunk
 class BoundReferenceExpression : public Expression {
 public:
-	BoundReferenceExpression(string alias, TypeId type, idx_t index);
-	BoundReferenceExpression(TypeId type, idx_t index);
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_REF;
+
+public:
+	BoundReferenceExpression(string alias, LogicalType type, idx_t index);
+	BoundReferenceExpression(LogicalType type, storage_t index);
 
 	//! Index used to access data in the chunks
-	idx_t index;
+	storage_t index;
 
 public:
 	bool IsScalar() const override {
@@ -29,13 +31,18 @@ public:
 	bool IsFoldable() const override {
 		return false;
 	}
+    storage_t GetIndex() {
+        return index;
+    }
 
 	string ToString() const override;
 
 	hash_t Hash() const override;
-	bool Equals(const BaseExpression *other) const override;
-    substrait::AggregateFunction* ToAggregateFunction() const override;
+	bool Equals(const BaseExpression &other) const override;
 
 	unique_ptr<Expression> Copy() override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 };
 } // namespace duckdb

@@ -1,29 +1,34 @@
 add_subdirectory(buffer)
 add_subdirectory(checkpoint)
+add_subdirectory(compression)
+add_subdirectory(metadata)
+add_subdirectory(serialization)
+add_subdirectory(statistics)
 add_subdirectory(table)
 
-add_library_unity(duckdb_storage
-                  OBJECT
-                  alist.cpp
-                  buffer_manager.cpp
-                  checkpoint_manager.cpp
-                  column_data.cpp
-                  block.cpp
-                  data_table.cpp
-                  index.cpp
-                  local_storage.cpp
-                  meta_block_reader.cpp
-                  meta_block_writer.cpp
-                  numeric_segment.cpp
-                  rai.cpp
-                  storage_manager.cpp
-                  write_ahead_log.cpp
-                  uncompressed_segment.cpp
-                  single_file_block_manager.cpp
-                  string_segment.cpp
-                  storage_info.cpp
-                  storage_lock.cpp
-                  wal_replay.cpp)
+add_library_unity(
+  duckdb_storage
+  OBJECT
+  alist.cpp
+  arena_allocator.cpp
+  buffer_manager.cpp
+  checkpoint_manager.cpp
+  block.cpp
+  data_table.cpp
+  index.cpp
+  local_storage.cpp
+  magic_bytes.cpp
+  storage_manager.cpp
+  standard_buffer_manager.cpp
+  table_index_list.cpp
+  write_ahead_log.cpp
+  optimistic_data_writer.cpp
+  partial_block_manager.cpp
+  single_file_block_manager.cpp
+  storage_info.cpp
+  storage_lock.cpp
+  wal_replay.cpp
+  rai.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_storage>
     PARENT_SCOPE)

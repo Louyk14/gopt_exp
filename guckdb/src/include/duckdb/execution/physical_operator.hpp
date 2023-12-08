@@ -8,54 +8,38 @@
 
 #pragma once
 
-#include <unordered_map>
-
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/enums/operator_result_type.hpp"
 #include "duckdb/common/enums/physical_operator_type.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
-#include "duckdb/parser/statement/select_statement.hpp"
-#include "duckdb/planner/expression.hpp"
-#include "duckdb/planner/joinside.hpp"
-#include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/execution/execution_context.hpp"
+#include "duckdb/optimizer/join_order/join_node.hpp"
+#include "duckdb/common/optional_idx.hpp"
+#include "duckdb/execution/physical_operator_states.hpp"
+#include "duckdb/common/enums/order_preservation_type.hpp"
 #include "duckdb/protocode/algebra.pb.h"
+#include "duckdb/storage/alist.hpp"
 
 namespace duckdb {
-class ClientContext;
-class ExpressionExecutor;
+class Event;
+class Executor;
 class PhysicalOperator;
-
-//! The current state/context of the operator. The PhysicalOperatorState is
-//! updated using the GetChunk function, and allows the caller to repeatedly
-//! call the GetChunk function and get new batches of data everytime until the
-//! data source is exhausted.
-class PhysicalOperatorState {
-public:
-	PhysicalOperatorState(PhysicalOperator *child);
-	virtual ~PhysicalOperatorState() = default;
-
-	//! Flag indicating whether or not the operator is finished [note: not all
-	//! operators use this flag]
-	bool finished;
-	//! DataChunk that stores data from the child of this operator
-	DataChunk child_chunk;
-	//! State of the child of this operator
-	unique_ptr<PhysicalOperatorState> child_state;
-};
+class Pipeline;
+class PipelineBuildState;
+class MetaPipeline;
 
 //! PhysicalOperator is the base class of the physical operators present in the
 //! execution plan
-/*!
-    The execution model is a pull-based execution model. GetChunk is called on
-   the root node, which causes the root node to be executed, and presumably call
-   GetChunk again on its child nodes. Every node in the operator chain has a
-   state that is updated as GetChunk is called: PhysicalOperatorState (different
-   operators subclass this state and add different properties).
-*/
 class PhysicalOperator {
 public:
-	PhysicalOperator(PhysicalOperatorType type, vector<TypeId> types) : type(type), types(types) {
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::INVALID;
+
+public:
+	PhysicalOperator(PhysicalOperatorType type, vector<LogicalType> types, idx_t estimated_cardinality)
+	    : type(type), types(std::move(types)), estimated_cardinality(estimated_cardinality) {
 	}
+
 	virtual ~PhysicalOperator() {
 	}
 
@@ -64,75 +48,227 @@ public:
 	//! The set of children of the operator
 	vector<unique_ptr<PhysicalOperator>> children;
 	//! The types returned by this physical operator
-	vector<TypeId> types;
+	vector<LogicalType> types;
+	//! The estimated cardinality of this physical operator
+	idx_t estimated_cardinality;
+
+	//! The global sink state of this operator
+	unique_ptr<GlobalSinkState> sink_state;
+	//! The global state of this operator
+	unique_ptr<GlobalOperatorState> op_state;
+	//! Lock for (re)setting any of the operator states
+	mutex lock;
 
 public:
-	string ToString(idx_t depth = 0) const;
-	string ToJSON() const;
-	virtual string GetSubstraitInfo(std::unordered_map<ExpressionType, idx_t>& func_map,
-	                                idx_t& func_num, idx_t depth = 0) const {
+	virtual string GetName() const;
+	virtual string ParamsToString() const {
 		return "";
 	}
-	string AssignBlank(int depth) const;
-	string ToSubstrait() const;
-	virtual substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
-        std::cout << "ToSubstrait not supported" << std::endl;
-		return new substrait::Rel();
-	}
-
-	string GetHeader(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, int depth) const;
-	void Print();
+	virtual string ToString() const;
+	void Print() const;
+	virtual vector<const_reference<PhysicalOperator>> GetChildren() const;
+    virtual string GetSubstraitInfo(std::unordered_map<ExpressionType, idx_t>& func_map,
+                                    idx_t& func_num, idx_t depth = 0) const {
+        return "";
+    }
+    string AssignBlank(int depth) const {
+        return "";
+    };
+    string ToSubstrait() const {
+        return "";
+    };
+    virtual substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
+        return new substrait::Rel();
+    }
 
 	//! Return a vector of the types that will be returned by this operator
-	vector<TypeId> &GetTypes() {
+	const vector<LogicalType> &GetTypes() const {
 		return types;
 	}
-	//! Initialize a given chunk to the types that will be returned by this
-	//! operator, this will prepare chunk for a call to GetChunk. This method
-	//! only has to be called once for any amount of calls to GetChunk.
-	virtual void InitializeChunk(DataChunk &chunk) {
-		auto &types = GetTypes();
-		chunk.Initialize(types);
-	}
-	//! Retrieves a chunk from this operator and stores it in the chunk
-	//! variable.
-	virtual void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state,
-	                              SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                              DataChunk *rai_chunk = nullptr) = 0;
 
-	void GetChunk(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state,
-	              SelectionVector *sel = nullptr, Vector *rid_vector = nullptr, DataChunk *rai_chunk = nullptr);
-
-	virtual bool PushdownZoneFilter(idx_t table_index, const shared_ptr<bitmask_vector> &zone_filter,
-	                                const shared_ptr<bitmask_vector> &zone_sel) {
-		if (table_index == 0) {
-			return false;
-		}
-		for (auto &child : children) {
-			if (child->PushdownZoneFilter(table_index, zone_filter, zone_sel)) {
-				return true;
-			}
-		}
+	virtual bool Equals(const PhysicalOperator &other) const {
 		return false;
 	}
 
-	virtual bool PushdownRowsFilter(idx_t table_index, const shared_ptr<vector<row_t>> &rows_filter, idx_t count) {
-		if (table_index == 0) {
-			return false;
-		}
-		for (auto &child : children) {
-			child->PushdownRowsFilter(table_index, rows_filter, count);
-		}
+	virtual void Verify();
+
+public:
+	// Operator interface
+	virtual unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const;
+	virtual unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const;
+	virtual OperatorResultType Execute(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+	                                   GlobalOperatorState &gstate, OperatorState &state) const;
+	virtual OperatorFinalizeResultType FinalExecute(ExecutionContext &context, DataChunk &chunk,
+	                                                GlobalOperatorState &gstate, OperatorState &state) const;
+
+	virtual bool ParallelOperator() const {
 		return false;
 	}
 
-	//! Create a new empty instance of the operator state
-	virtual unique_ptr<PhysicalOperatorState> GetOperatorState() {
-		return make_unique<PhysicalOperatorState>(children.size() == 0 ? nullptr : children[0].get());
+	virtual bool RequiresFinalExecute() const {
+		return false;
 	}
 
-	virtual string ExtraRenderInformation() const {
-		return "";
+	//! The influence the operator has on order (insertion order means no influence)
+	virtual OrderPreservationType OperatorOrder() const {
+		return OrderPreservationType::INSERTION_ORDER;
+	}
+
+    virtual bool PushdownZoneFilter(idx_t table_index, const shared_ptr<bitmask_vector> &zone_filter,
+                                    const shared_ptr<bitmask_vector> &zone_sel) {
+        if (table_index == 0) {
+            return false;
+        }
+        for (auto &child : children) {
+            if (child->PushdownZoneFilter(table_index, zone_filter, zone_sel)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+public:
+	// Source interface
+	virtual unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
+	                                                         GlobalSourceState &gstate) const;
+	virtual unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const;
+	virtual SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const;
+
+	virtual idx_t GetBatchIndex(ExecutionContext &context, DataChunk &chunk, GlobalSourceState &gstate,
+	                            LocalSourceState &lstate) const;
+
+	virtual bool IsSource() const {
+		return false;
+	}
+
+	virtual bool ParallelSource() const {
+		return false;
+	}
+
+	virtual bool SupportsBatchIndex() const {
+		return false;
+	}
+
+	//! The type of order emitted by the operator (as a source)
+	virtual OrderPreservationType SourceOrder() const {
+		return OrderPreservationType::INSERTION_ORDER;
+	}
+
+	//! Returns the current progress percentage, or a negative value if progress bars are not supported
+	virtual double GetProgress(ClientContext &context, GlobalSourceState &gstate) const;
+
+public:
+	// Sink interface
+
+	//! The sink method is called constantly with new input, as long as new input is available. Note that this method
+	//! CAN be called in parallel, proper locking is needed when accessing data inside the GlobalSinkState.
+	virtual SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const;
+	// The combine is called when a single thread has completed execution of its part of the pipeline, it is the final
+	// time that a specific LocalSinkState is accessible. This method can be called in parallel while other Sink() or
+	// Combine() calls are active on the same GlobalSinkState.
+	virtual SinkCombineResultType Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const;
+	//! The finalize is called when ALL threads are finished execution. It is called only once per pipeline, and is
+	//! entirely single threaded.
+	//! If Finalize returns SinkResultType::FINISHED, the sink is marked as finished
+	virtual SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+	                                  OperatorSinkFinalizeInput &input) const;
+	//! For sinks with RequiresBatchIndex set to true, when a new batch starts being processed this method is called
+	//! This allows flushing of the current batch (e.g. to disk) TODO: should this be able to block too?
+	virtual void NextBatch(ExecutionContext &context, GlobalSinkState &state, LocalSinkState &lstate_p) const;
+
+	virtual unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const;
+	virtual unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const;
+
+	//! The maximum amount of memory the operator should use per thread.
+	static idx_t GetMaxThreadMemory(ClientContext &context);
+
+	//! Whether operator caching is allowed in the current execution context
+	static bool OperatorCachingAllowed(ExecutionContext &context);
+
+	virtual bool IsSink() const {
+		return false;
+	}
+
+	virtual bool ParallelSink() const {
+		return false;
+	}
+
+	virtual bool RequiresBatchIndex() const {
+		return false;
+	}
+
+	//! Whether or not the sink operator depends on the order of the input chunks
+	//! If this is set to true, we cannot do things like caching intermediate vectors
+	virtual bool SinkOrderDependent() const {
+		return false;
+	}
+
+public:
+	// Pipeline construction
+	virtual vector<const_reference<PhysicalOperator>> GetSources() const;
+	bool AllSourcesSupportBatchIndex() const;
+
+	virtual void BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline);
+
+public:
+	template <class TARGET>
+	TARGET &Cast() {
+		if (TARGET::TYPE != PhysicalOperatorType::INVALID && type != TARGET::TYPE) {
+			throw InternalException("Failed to cast physical operator to type - physical operator type mismatch");
+		}
+		return reinterpret_cast<TARGET &>(*this);
+	}
+
+	template <class TARGET>
+	const TARGET &Cast() const {
+		if (TARGET::TYPE != PhysicalOperatorType::INVALID && type != TARGET::TYPE) {
+			throw InternalException("Failed to cast physical operator to type - physical operator type mismatch");
+		}
+		return reinterpret_cast<const TARGET &>(*this);
 	}
 };
+
+//! Contains state for the CachingPhysicalOperator
+class CachingOperatorState : public OperatorState {
+public:
+	~CachingOperatorState() override {
+	}
+
+	void Finalize(const PhysicalOperator &op, ExecutionContext &context) override {
+	}
+
+	unique_ptr<DataChunk> cached_chunk;
+	bool initialized = false;
+	//! Whether or not the chunk can be cached
+	bool can_cache_chunk = false;
+};
+
+//! Base class that caches output from child Operator class. Note that Operators inheriting from this class should also
+//! inherit their state class from the CachingOperatorState.
+class CachingPhysicalOperator : public PhysicalOperator {
+public:
+	static constexpr const idx_t CACHE_THRESHOLD = 64;
+	CachingPhysicalOperator(PhysicalOperatorType type, vector<LogicalType> types, idx_t estimated_cardinality);
+
+	bool caching_supported;
+
+public:
+	OperatorResultType Execute(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+	                           GlobalOperatorState &gstate, OperatorState &state) const final;
+	OperatorFinalizeResultType FinalExecute(ExecutionContext &context, DataChunk &chunk, GlobalOperatorState &gstate,
+	                                        OperatorState &state) const final;
+
+	bool RequiresFinalExecute() const final {
+		return caching_supported;
+	}
+
+protected:
+	//! Child classes need to implement the ExecuteInternal method instead of the Execute
+	virtual OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+	                                           GlobalOperatorState &gstate, OperatorState &state) const = 0;
+
+private:
+	bool CanCacheType(const LogicalType &type);
+};
+
 } // namespace duckdb

@@ -1,17 +1,17 @@
 #include "duckdb/execution/operator/schema/physical_alter.hpp"
-
-#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-
-using namespace std;
+#include "duckdb/catalog/catalog.hpp"
 
 namespace duckdb {
 
-void PhysicalAlter::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state,
-                                     SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	auto table_info = (AlterTableInfo *)info.get();
-	context.catalog.AlterTable(context, table_info);
-	state->finished = true;
+//===--------------------------------------------------------------------===//
+// Source
+//===--------------------------------------------------------------------===//
+SourceResultType PhysicalAlter::GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const {
+	auto &catalog = Catalog::GetCatalog(context.client, info->catalog);
+	catalog.Alter(context.client, *info);
+
+	return SourceResultType::FINISHED;
 }
 
 } // namespace duckdb

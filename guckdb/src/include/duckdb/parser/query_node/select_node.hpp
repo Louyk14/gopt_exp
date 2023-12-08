@@ -12,20 +12,19 @@
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/parser/tableref.hpp"
+#include "duckdb/parser/parsed_data/sample_options.hpp"
+#include "duckdb/parser/group_by_node.hpp"
+#include "duckdb/common/enums/aggregate_handling.hpp"
 
 namespace duckdb {
-
-enum class AggregateHandling : uint8_t {
-	STANDARD_HANDLING,     // standard handling as in the SELECT clause
-	NO_AGGREGATES_ALLOWED, // no aggregates allowed: any aggregates in this node will result in an error
-	FORCE_AGGREGATES       // force aggregates: any non-aggregate select list entry will become a GROUP
-};
 
 //! SelectNode represents a standard SELECT statement
 class SelectNode : public QueryNode {
 public:
-	SelectNode() : QueryNode(QueryNodeType::SELECT_NODE), aggregate_handling(AggregateHandling::STANDARD_HANDLING) {
-	}
+	static constexpr const QueryNodeType TYPE = QueryNodeType::SELECT_NODE;
+
+public:
+	DUCKDB_API SelectNode();
 
 	//! The projection list
 	vector<unique_ptr<ParsedExpression>> select_list;
@@ -34,23 +33,35 @@ public:
 	//! The WHERE clause
 	unique_ptr<ParsedExpression> where_clause;
 	//! list of groups
-	vector<unique_ptr<ParsedExpression>> groups;
+	GroupByNode groups;
 	//! HAVING clause
 	unique_ptr<ParsedExpression> having;
+	//! QUALIFY clause
+	unique_ptr<ParsedExpression> qualify;
 	//! Aggregate handling during binding
 	AggregateHandling aggregate_handling;
+	//! The SAMPLE clause
+	unique_ptr<SampleOptions> sample;
 
 	const vector<unique_ptr<ParsedExpression>> &GetSelectList() const override {
 		return select_list;
 	}
 
 public:
+	//! Convert the query node to a string
+	string ToString() const override;
+
 	bool Equals(const QueryNode *other) const override;
+
 	//! Create a copy of this SelectNode
-	unique_ptr<QueryNode> Copy() override;
-	//! Serializes a SelectNode to a stand-alone binary blob
-	void Serialize(Serializer &serializer) override;
-	//! Deserializes a blob back into a SelectNode
-	static unique_ptr<QueryNode> Deserialize(Deserializer &source);
+	unique_ptr<QueryNode> Copy() const override;
+
+	//! Serializes a QueryNode to a stand-alone binary blob
+
+	//! Deserializes a blob back into a QueryNode
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<QueryNode> Deserialize(Deserializer &deserializer);
 };
-}; // namespace duckdb
+
+} // namespace duckdb

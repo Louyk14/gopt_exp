@@ -2,28 +2,37 @@
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/planner/binder.hpp"
-#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 
-CreateViewRelation::CreateViewRelation(shared_ptr<Relation> child_p, string view_name, bool replace)
-    : Relation(child_p->context, RelationType::CREATE_VIEW_RELATION), child(move(child_p)), view_name(move(view_name)),
-      replace(replace) {
-	context.TryBindRelation(*this, this->columns);
+CreateViewRelation::CreateViewRelation(shared_ptr<Relation> child_p, string view_name_p, bool replace_p,
+                                       bool temporary_p)
+    : Relation(child_p->context, RelationType::CREATE_VIEW_RELATION), child(std::move(child_p)),
+      view_name(std::move(view_name_p)), replace(replace_p), temporary(temporary_p) {
+	context.GetContext()->TryBindRelation(*this, this->columns);
 }
 
-unique_ptr<QueryNode> CreateViewRelation::GetQueryNode() {
-	throw InternalException("Cannot create a query node from a CreateViewRelation!");
+CreateViewRelation::CreateViewRelation(shared_ptr<Relation> child_p, string schema_name_p, string view_name_p,
+                                       bool replace_p, bool temporary_p)
+    : Relation(child_p->context, RelationType::CREATE_VIEW_RELATION), child(std::move(child_p)),
+      schema_name(std::move(schema_name_p)), view_name(std::move(view_name_p)), replace(replace_p),
+      temporary(temporary_p) {
+	context.GetContext()->TryBindRelation(*this, this->columns);
 }
 
 BoundStatement CreateViewRelation::Bind(Binder &binder) {
+	auto select = make_uniq<SelectStatement>();
+	select->node = child->GetQueryNode();
+
 	CreateStatement stmt;
-	auto info = make_unique<CreateViewInfo>();
-	info->query = child->GetQueryNode();
+	auto info = make_uniq<CreateViewInfo>();
+	info->query = std::move(select);
 	info->view_name = view_name;
-	info->on_conflict = replace ? OnCreateConflict::REPLACE : OnCreateConflict::ERROR;
-	stmt.info = move(info);
-	return binder.Bind((SQLStatement &)stmt);
+	info->temporary = temporary;
+	info->schema = schema_name;
+	info->on_conflict = replace ? OnCreateConflict::REPLACE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
+	stmt.info = std::move(info);
+	return binder.Bind(stmt.Cast<SQLStatement>());
 }
 
 const vector<ColumnDefinition> &CreateViewRelation::Columns() {

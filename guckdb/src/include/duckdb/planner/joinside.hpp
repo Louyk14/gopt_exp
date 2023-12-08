@@ -17,47 +17,34 @@ namespace duckdb {
 //! JoinCondition represents a left-right comparison join condition
 struct JoinCondition {
 public:
-	JoinCondition() : null_values_are_equal(false) {
+	JoinCondition() {
 	}
 
 	//! Turns the JoinCondition into an expression; note that this destroys the JoinCondition as the expression inherits
 	//! the left/right expressions
 	static unique_ptr<Expression> CreateExpression(JoinCondition cond);
+	static unique_ptr<Expression> CreateExpression(vector<JoinCondition> conditions);
+
+	void Serialize(Serializer &serializer) const;
+	static JoinCondition Deserialize(Deserializer &deserializer);
 
 public:
 	unique_ptr<Expression> left;
 	unique_ptr<Expression> right;
 	ExpressionType comparison;
-	//! NULL values are equal for just THIS JoinCondition (instead of the entire join).
-	//! This is only supported by the HashJoin and can only be used in equality comparisons.
-	bool null_values_are_equal = false;
-	//! RAI info binded to this join condition
-	vector<unique_ptr<RAIInfo>> rais;
-
-	string ToString() {
-		string result = ExpressionTypeToString(comparison) + "(" + left->GetName() + ", " + right->GetName() + ")";
-		if (rais.size() != 0 ) {
-			result += "[";
-			for (auto &rai: rais) {
-				result += rai->ToString();
-				result += "\n";
-			}
-			result += "]";
-		}
-		return result;
-	}
+    //! NULL values are equal for just THIS JoinCondition (instead of the entire join).
+    //! This is only supported by the HashJoin and can only be used in equality comparisons.
+    bool null_values_are_equal = false;
+    //! RAI info binded to this join condition
+    vector<unique_ptr<RAIInfo>> rais;
 };
-
-// enum class JoinSide : uint8_t {
-// 	NONE, LEFT, RIGHT, BOTH
-// };
 
 class JoinSide {
 public:
-	enum join_value : uint8_t { NONE, LEFT, RIGHT, BOTH };
+	enum JoinValue : uint8_t { NONE, LEFT, RIGHT, BOTH };
 
 	JoinSide() = default;
-	constexpr JoinSide(join_value val) : value(val) {
+	constexpr JoinSide(JoinValue val) : value(val) { // NOLINT: Allow implicit conversion from `join_value`
 	}
 
 	bool operator==(JoinSide a) const {
@@ -68,15 +55,15 @@ public:
 	}
 
 	static JoinSide CombineJoinSide(JoinSide left, JoinSide right);
-	static JoinSide GetJoinSide(idx_t table_binding, unordered_set<idx_t> &left_bindings,
-	                            unordered_set<uint64_t> &right_bindings);
-	static JoinSide GetJoinSide(Expression &expression, unordered_set<idx_t> &left_bindings,
-	                            unordered_set<idx_t> &right_bindings);
-	static JoinSide GetJoinSide(unordered_set<idx_t> bindings, unordered_set<idx_t> &left_bindings,
-	                            unordered_set<idx_t> &right_bindings);
+	static JoinSide GetJoinSide(idx_t table_binding, const unordered_set<idx_t> &left_bindings,
+	                            const unordered_set<uint64_t> &right_bindings);
+	static JoinSide GetJoinSide(Expression &expression, const unordered_set<idx_t> &left_bindings,
+	                            const unordered_set<idx_t> &right_bindings);
+	static JoinSide GetJoinSide(const unordered_set<idx_t> &bindings, const unordered_set<idx_t> &left_bindings,
+	                            const unordered_set<idx_t> &right_bindings);
 
 private:
-	join_value value;
+	JoinValue value;
 };
 
-}; // namespace duckdb
+} // namespace duckdb

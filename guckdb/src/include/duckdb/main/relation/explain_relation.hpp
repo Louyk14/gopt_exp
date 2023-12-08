@@ -14,13 +14,13 @@ namespace duckdb {
 
 class ExplainRelation : public Relation {
 public:
-	ExplainRelation(shared_ptr<Relation> child);
+	explicit ExplainRelation(shared_ptr<Relation> child, ExplainType type = ExplainType::EXPLAIN_STANDARD);
 
 	shared_ptr<Relation> child;
 	vector<ColumnDefinition> columns;
+	ExplainType type;
 
 public:
-	unique_ptr<QueryNode> GetQueryNode() override;
 	BoundStatement Bind(Binder &binder) override;
 	const vector<ColumnDefinition> &Columns() override;
 	string ToString(idx_t depth) override;

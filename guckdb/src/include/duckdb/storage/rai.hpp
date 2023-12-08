@@ -12,6 +12,8 @@
 #include "duckdb/common/enums/rai_direction.hpp"
 #include "duckdb/storage/alist.hpp"
 
+#define ENABLE_ALISTS true
+
 #include <mutex>
 
 namespace duckdb {
@@ -28,17 +30,18 @@ enum class RAIType : uint8_t {
 //! Relational Adjacency Index
 class RAI {
 public:
-	RAI(string name, TableCatalogEntry *table, RAIDirection rai_direction, vector<column_t> column_ids,
+	RAI(string name, TableCatalogEntry* table, RAIDirection rai_direction, vector<column_t> column_ids,
 	    vector<TableCatalogEntry *> referenced_tables, vector<column_t> referenced_columns)
 	    : name(name), table(table), rai_direction(rai_direction), column_ids(column_ids),
 	      referenced_tables(referenced_tables), referenced_columns(referenced_columns) {
-		alist = make_unique<AList>(name + "_alist");
+		// RAI::alist = make_unique<AList>(name + "_alist");
+        alist = make_uniq<AList>(name + "_alist");
 	}
 	virtual ~RAI() = default;
 
 	std::mutex lock;
 	string name;
-	TableCatalogEntry *table;
+	TableCatalogEntry* table;
 	RAIDirection rai_direction;
 	vector<column_t> column_ids;
 	vector<TableCatalogEntry *> referenced_tables;
@@ -64,16 +67,16 @@ public:
 		string description;
 		description.append(this->name + "(");
 		for (unsigned long i = 0; i < this->column_ids.size(); i++) {
-			string column_name = this->table->columns[this->column_ids[i]].name;
-			string ref_column_name = this->referenced_tables[i]->columns[referenced_columns[i]].name;
-			description.append(column_name + ": " + this->referenced_tables[i]->name + "." + ref_column_name + ",");
+			// string column_name = this->table->GetColumn(LogicalIndex(this->column_ids[i])).Name();
+			// string ref_column_name = this->referenced_tables[i]->GetColumn(LogicalIndex(referenced_columns[i])).Name();
+			// description.append(column_name + ": " + this->referenced_tables[i]->name + "." + ref_column_name + ",");
 		}
 		description = description.substr(0, description.length() - 1) + ");";
 		return description;
 	}
 };
 
-enum AListDirection : uint8_t { FORWARD, BACKWARD, INVALID };
+enum AListDirection : uint8_t { FORWARD, BACKWARD, INVALID_DIR };
 
 struct RAIInfo {
 	explicit RAIInfo() : rai(nullptr), rai_type(RAIType::INVALID), forward(true), vertex(nullptr) {

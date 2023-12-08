@@ -5,13 +5,13 @@ using namespace std;
 
 void RAI::GetChunk(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_chunk, idx_t &left_tuple,
                    idx_t &right_tuple, bool forward) const {
-	assert(new_chunk.column_count() == right_chunk.column_count() + 2);
+	assert(new_chunk.ColumnCount() == right_chunk.ColumnCount() + 2);
 	SelectionVector rvector(STANDARD_VECTOR_SIZE);
 	// join alist, get sel_vec and rai_chunk
 	// in this context, l refers to alist, r refers to right_chunk/rid_chunk
 	auto matched_count = alist->Fetch(left_tuple, right_tuple, rid_chunk.data[0], rid_chunk.size(), rvector,
-	                                  new_chunk.data[right_chunk.column_count()],
-	                                  new_chunk.data[right_chunk.column_count() + 1], forward);
+	                                  new_chunk.data[right_chunk.ColumnCount()],
+	                                  new_chunk.data[right_chunk.ColumnCount() + 1], forward);
 	// slice and construct new_chunk
 	new_chunk.Slice(right_chunk, rvector, matched_count);
 	new_chunk.SetCardinality(matched_count);
@@ -19,10 +19,10 @@ void RAI::GetChunk(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_
 
 void RAI::GetVertexes(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_chunk, idx_t &left_tuple,
                       idx_t &right_tuple, bool forward) const {
-	assert(new_chunk.column_count() == right_chunk.column_count() + 1);
+	assert(new_chunk.ColumnCount() == right_chunk.ColumnCount() + 1);
 	SelectionVector rvector(STANDARD_VECTOR_SIZE);
 	auto matched_count = alist->FetchVertexes(left_tuple, right_tuple, rid_chunk.data[0], rid_chunk.size(), rvector,
-	                                          new_chunk.data[right_chunk.column_count()], forward);
+	                                          new_chunk.data[right_chunk.ColumnCount()], forward);
 	// slice and construct new_chunk
 	new_chunk.Slice(right_chunk, rvector, matched_count);
 	new_chunk.SetCardinality(matched_count);

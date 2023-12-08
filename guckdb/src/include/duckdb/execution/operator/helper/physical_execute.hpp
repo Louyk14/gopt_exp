@@ -9,22 +9,26 @@
 #pragma once
 
 #include "duckdb/execution/physical_operator.hpp"
+#include "duckdb/main/prepared_statement_data.hpp"
 
 namespace duckdb {
 
 class PhysicalExecute : public PhysicalOperator {
 public:
-	PhysicalExecute(PhysicalOperator *plan) : PhysicalOperator(PhysicalOperatorType::EXECUTE, plan->types), plan(plan) {
-	}
-
-	PhysicalOperator *plan;
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXECUTE;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
+	explicit PhysicalExecute(PhysicalOperator &plan);
 
-	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
+	PhysicalOperator &plan;
+	unique_ptr<PhysicalOperator> owned_plan;
+	shared_ptr<PreparedStatementData> prepared;
+
+public:
+	vector<const_reference<PhysicalOperator>> GetChildren() const override;
+
+public:
+	void BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) override;
 };
 
 } // namespace duckdb

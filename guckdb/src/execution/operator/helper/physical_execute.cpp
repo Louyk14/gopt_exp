@@ -1,14 +1,20 @@
 #include "duckdb/execution/operator/helper/physical_execute.hpp"
 
-using namespace duckdb;
-using namespace std;
+#include "duckdb/parallel/meta_pipeline.hpp"
 
-void PhysicalExecute::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-                                       SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	assert(plan);
-	plan->GetChunk(context, chunk, state_, sel, rid_vector, rai_chunk);
+namespace duckdb {
+
+PhysicalExecute::PhysicalExecute(PhysicalOperator &plan)
+    : PhysicalOperator(PhysicalOperatorType::EXECUTE, plan.types, -1), plan(plan) {
 }
 
-unique_ptr<PhysicalOperatorState> PhysicalExecute::GetOperatorState() {
-	return plan->GetOperatorState();
+vector<const_reference<PhysicalOperator>> PhysicalExecute::GetChildren() const {
+	return {plan};
 }
+
+void PhysicalExecute::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) {
+	// EXECUTE statement: build pipeline on child
+	meta_pipeline.Build(plan);
+}
+
+} // namespace duckdb

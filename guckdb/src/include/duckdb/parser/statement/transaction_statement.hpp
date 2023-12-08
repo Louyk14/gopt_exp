@@ -15,9 +15,17 @@ namespace duckdb {
 
 class TransactionStatement : public SQLStatement {
 public:
-	TransactionStatement(TransactionType type)
-	    : SQLStatement(StatementType::TRANSACTION_STATEMENT), info(make_unique<TransactionInfo>(type)){};
+	static constexpr const StatementType TYPE = StatementType::TRANSACTION_STATEMENT;
+
+public:
+	explicit TransactionStatement(TransactionType type);
 
 	unique_ptr<TransactionInfo> info;
+
+protected:
+	TransactionStatement(const TransactionStatement &other);
+
+public:
+	unique_ptr<SQLStatement> Copy() const override;
 };
 } // namespace duckdb

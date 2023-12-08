@@ -10,54 +10,79 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/radix.hpp"
+#include "duckdb/common/types/string_type.hpp"
+#include "duckdb/common/types/value.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 
 namespace duckdb {
 
-class Key {
+class ARTKey {
 public:
-	Key(unique_ptr<data_t[]> data, idx_t len);
+	ARTKey();
+	ARTKey(const data_ptr_t &data, const uint32_t &len);
+	ARTKey(ArenaAllocator &allocator, const uint32_t &len);
 
-	idx_t len;
-	unique_ptr<data_t[]> data;
+	uint32_t len;
+	data_ptr_t data;
 
 public:
-	template <class T> static unique_ptr<Key> CreateKey(T element, bool is_little_endian) {
-		auto data = Key::CreateData<T>(element, is_little_endian);
-		return make_unique<Key>(move(data), sizeof(element));
+	template <class T>
+	static inline ARTKey CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, T element) {
+		auto data = ARTKey::CreateData<T>(allocator, element);
+		return ARTKey(data, sizeof(element));
+	}
+
+	template <class T>
+	static inline ARTKey CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, const Value &element) {
+		return CreateARTKey(allocator, type, element.GetValueUnsafe<T>());
+	}
+
+	template <class T>
+	static inline void CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, ARTKey &key, T element) {
+		key.data = ARTKey::CreateData<T>(allocator, element);
+		key.len = sizeof(element);
+	}
+
+	template <class T>
+	static inline void CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, ARTKey &key,
+	                                const Value element) {
+		key.data = ARTKey::CreateData<T>(allocator, element.GetValueUnsafe<T>());
+		key.len = sizeof(element);
 	}
 
 public:
-	data_t &operator[](std::size_t i) {
+	data_t &operator[](size_t i) {
 		return data[i];
 	}
-	const data_t &operator[](std::size_t i) const {
+	const data_t &operator[](size_t i) const {
 		return data[i];
 	}
-	bool operator>(const Key &k) const;
-	bool operator<(const Key &k) const;
-	bool operator>=(const Key &k) const;
-	bool operator==(const Key &k) const;
+	bool operator>(const ARTKey &k) const;
+	bool operator>=(const ARTKey &k) const;
+	bool operator==(const ARTKey &k) const;
 
-	string ToString(bool is_little_endian, TypeId type);
-
-	static uint32_t EncodeFloat(float x);
-	static uint64_t EncodeDouble(double x);
+	inline bool ByteMatches(const ARTKey &other, const uint32_t &depth) const {
+		return data[depth] == other[depth];
+	}
+	inline bool Empty() const {
+		return len == 0;
+	}
+	void ConcatenateARTKey(ArenaAllocator &allocator, ARTKey &concat_key);
 
 private:
-	template <class T> static unique_ptr<data_t[]> CreateData(T value, bool is_little_endian) {
-		throw NotImplementedException("Cannot create data from this type");
+	template <class T>
+	static inline data_ptr_t CreateData(ArenaAllocator &allocator, T value) {
+		auto data = allocator.Allocate(sizeof(value));
+		Radix::EncodeData<T>(data, value);
+		return data;
 	}
 };
 
-template <> unique_ptr<data_t[]> Key::CreateData(bool value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(int8_t value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(int16_t value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(int32_t value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(int64_t value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(double value, bool is_little_endian);
-template <> unique_ptr<data_t[]> Key::CreateData(float value, bool is_little_endian);
-
-template <> unique_ptr<Key> Key::CreateKey(string_t value, bool is_little_endian);
-template <> unique_ptr<Key> Key::CreateKey(const char *value, bool is_little_endian);
-
+template <>
+ARTKey ARTKey::CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, string_t value);
+template <>
+ARTKey ARTKey::CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, const char *value);
+template <>
+void ARTKey::CreateARTKey(ArenaAllocator &allocator, const LogicalType &type, ARTKey &key, string_t value);
 } // namespace duckdb

@@ -2,16 +2,18 @@
 #include "duckdb/planner/operator/logical_cteref.hpp"
 #include "duckdb/planner/tableref/bound_cteref.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 unique_ptr<LogicalOperator> Binder::CreatePlan(BoundCTERef &ref) {
 	auto index = ref.bind_index;
 
-	vector<TypeId> types;
-	for (auto &expr : ref.types) {
-		types.push_back(GetInternalType(expr.id));
+	vector<LogicalType> types;
+	types.reserve(ref.types.size());
+	for (auto &type : ref.types) {
+		types.push_back(type);
 	}
 
-	return make_unique<LogicalCTERef>(index, ref.cte_index, types, ref.bound_columns);
+	return make_uniq<LogicalCTERef>(index, ref.cte_index, types, ref.bound_columns, ref.materialized_cte);
 }
+
+} // namespace duckdb

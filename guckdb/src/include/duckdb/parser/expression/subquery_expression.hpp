@@ -10,17 +10,20 @@
 
 #include "duckdb/common/enums/subquery_type.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
-#include "duckdb/parser/query_node.hpp"
+#include "duckdb/parser/statement/select_statement.hpp"
 
 namespace duckdb {
 
 //! Represents a subquery
 class SubqueryExpression : public ParsedExpression {
 public:
+	static constexpr const ExpressionClass TYPE = ExpressionClass::SUBQUERY;
+
+public:
 	SubqueryExpression();
 
 	//! The actual subquery
-	unique_ptr<QueryNode> subquery;
+	unique_ptr<SelectStatement> subquery;
 	//! The subquery type
 	SubqueryType subquery_type;
 	//! the child expression to compare with (in case of IN, ANY, ALL operators, empty for EXISTS queries and scalar
@@ -39,11 +42,11 @@ public:
 
 	string ToString() const override;
 
-	static bool Equals(const SubqueryExpression *a, const SubqueryExpression *b);
+	static bool Equal(const SubqueryExpression &a, const SubqueryExpression &b);
 
 	unique_ptr<ParsedExpression> Copy() const override;
 
-	void Serialize(Serializer &serializer) override;
-	static unique_ptr<ParsedExpression> Deserialize(ExpressionType type, Deserializer &source);
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<ParsedExpression> Deserialize(Deserializer &deserializer);
 };
 } // namespace duckdb

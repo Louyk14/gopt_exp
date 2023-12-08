@@ -11,22 +11,23 @@
 #include "duckdb/common/enums/rai_direction.hpp"
 #include "duckdb/common/types/chunk_collection.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
+#include <assert.h>
 
 namespace duckdb {
 
-typedef vector<bool> bitmask_vector;
-typedef vector<row_t> rows_vector;
+typedef std::vector<bool> bitmask_vector;
+typedef std::vector<row_t> rows_vector;
 
 // List for each source vertex (with edges and destination vertices)
 struct EList {
 	EList() : size(0) {
-		edges = make_unique<vector<int64_t>>();
-		vertices = make_unique<vector<int64_t>>();
+		edges = make_uniq<std::vector<int64_t>>();
+		vertices = make_uniq<std::vector<int64_t>>();
 	}
 
 	idx_t size;
-	unique_ptr<vector<int64_t>> edges;
-	unique_ptr<vector<int64_t>> vertices;
+    std::unique_ptr<std::vector<int64_t>> edges;
+    std::unique_ptr<std::vector<int64_t>> vertices;
 };
 
 // adjacency lists stored in CSR format
@@ -64,10 +65,10 @@ public:
 	idx_t BuildZoneFilterWithExtra(data_ptr_t *hashmap, idx_t size, bitmask_vector &zone_filter,
 	                               bitmask_vector &extra_zone_filter, bool forward);
 	// WARNING: Deprecated
-	idx_t BuildRowsFilter(data_ptr_t *hashmap, idx_t size, vector<row_t> &rows_filter, bool forward);
+	idx_t BuildRowsFilter(data_ptr_t *hashmap, idx_t size, std::vector<row_t> &rows_filter, bool forward);
 	// WARNING: Deprecated
-	idx_t BuildRowsFilterWithExtra(data_ptr_t *hashmap, idx_t size, vector<row_t> &rows_filter,
-	                               vector<row_t> &extra_rows_filter, bool forward);
+	idx_t BuildRowsFilterWithExtra(data_ptr_t *hashmap, idx_t size, std::vector<row_t> &rows_filter,
+                                   std::vector<row_t> &extra_rows_filter, bool forward);
 	void Serialize(string path);
 
 public:
@@ -76,8 +77,8 @@ public:
 	idx_t edge_num;
 	double src_avg_degree;
 	double dst_avg_degree;
-	unordered_map<int64_t, unique_ptr<EList>> forward_map;
-	unordered_map<int64_t, unique_ptr<EList>> backward_map;
+	std::unordered_map<int64_t, unique_ptr<EList>> forward_map;
+	std::unordered_map<int64_t, unique_ptr<EList>> backward_map;
 	CompactList compact_forward_list;
 	CompactList compact_backward_list;
 };

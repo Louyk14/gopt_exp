@@ -1,9 +1,8 @@
 #include "duckdb/common/enums/statement_type.hpp"
 
-using namespace std;
-
 namespace duckdb {
 
+// LCOV_EXCL_START
 string StatementTypeToString(StatementType type) {
 	switch (type) {
 	case StatementType::SELECT_STATEMENT:
@@ -38,13 +37,47 @@ string StatementTypeToString(StatementType type) {
 		return "DROP";
 	case StatementType::PRAGMA_STATEMENT:
 		return "PRAGMA";
+	case StatementType::SHOW_STATEMENT:
+		return "SHOW";
 	case StatementType::VACUUM_STATEMENT:
 		return "VACUUM";
 	case StatementType::RELATION_STATEMENT:
 		return "RELATION";
-	default:
-		return "INVALID";
+	case StatementType::EXPORT_STATEMENT:
+		return "EXPORT";
+	case StatementType::CALL_STATEMENT:
+		return "CALL";
+	case StatementType::SET_STATEMENT:
+		return "SET";
+	case StatementType::LOAD_STATEMENT:
+		return "LOAD";
+	case StatementType::EXTENSION_STATEMENT:
+		return "EXTENSION";
+	case StatementType::LOGICAL_PLAN_STATEMENT:
+		return "LOGICAL_PLAN";
+	case StatementType::ATTACH_STATEMENT:
+		return "ATTACH";
+	case StatementType::DETACH_STATEMENT:
+		return "DETACH";
+	case StatementType::MULTI_STATEMENT:
+		return "MULTI";
+	case StatementType::INVALID_STATEMENT:
+		break;
 	}
+	return "INVALID";
 }
+
+string StatementReturnTypeToString(StatementReturnType type) {
+	switch (type) {
+	case StatementReturnType::QUERY_RESULT:
+		return "QUERY_RESULT";
+	case StatementReturnType::CHANGED_ROWS:
+		return "CHANGED_ROWS";
+	case StatementReturnType::NOTHING:
+		return "NOTHING";
+	}
+	return "INVALID";
+}
+// LCOV_EXCL_STOP
 
 } // namespace duckdb

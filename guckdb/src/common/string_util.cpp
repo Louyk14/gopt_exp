@@ -1,5 +1,10 @@
 #include "duckdb/common/string_util.hpp"
 
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/pair.hpp"
+#include "duckdb/common/to_string.hpp"
+#include "duckdb/common/helper.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
@@ -7,10 +12,22 @@
 #include <sstream>
 #include <stdarg.h>
 #include <string.h>
-#include <string>
+#include <random>
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
+
+string StringUtil::GenerateRandomName(idx_t length) {
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> dis(0, 15);
+
+	std::stringstream ss;
+	ss << std::hex;
+	for (idx_t i = 0; i < length; i++) {
+		ss << dis(gen);
+	}
+	return ss.str();
+}
 
 bool StringUtil::Contains(const string &haystack, const string &needle) {
 	return (haystack.find(needle) != string::npos);
@@ -18,7 +35,7 @@ bool StringUtil::Contains(const string &haystack, const string &needle) {
 
 void StringUtil::LTrim(string &str) {
 	auto it = str.begin();
-	while (isspace(*it)) {
+	while (it != str.end() && CharacterIsSpace(*it)) {
 		it++;
 	}
 	str.erase(str.begin(), it);
@@ -26,7 +43,15 @@ void StringUtil::LTrim(string &str) {
 
 // Remove trailing ' ', '\f', '\n', '\r', '\t', '\v'
 void StringUtil::RTrim(string &str) {
-	str.erase(find_if(str.rbegin(), str.rend(), [](int ch) { return ch > 0 && !isspace(ch); }).base(), str.end());
+	str.erase(find_if(str.rbegin(), str.rend(), [](int ch) { return ch > 0 && !CharacterIsSpace(ch); }).base(),
+	          str.end());
+}
+
+void StringUtil::RTrim(string &str, const string &chars_to_trim) {
+	str.erase(find_if(str.rbegin(), str.rend(),
+	                  [&chars_to_trim](int ch) { return ch > 0 && chars_to_trim.find(ch) == string::npos; })
+	              .base(),
+	          str.end());
 }
 
 void StringUtil::Trim(string &str) {
@@ -34,7 +59,7 @@ void StringUtil::Trim(string &str) {
 	StringUtil::RTrim(str);
 }
 
-bool StringUtil::StartsWith(const string &str, const string &prefix) {
+bool StringUtil::StartsWith(string str, string prefix) {
 	if (prefix.size() > str.size()) {
 		return false;
 	}
@@ -42,120 +67,160 @@ bool StringUtil::StartsWith(const string &str, const string &prefix) {
 }
 
 bool StringUtil::EndsWith(const string &str, const string &suffix) {
-	if (suffix.size() > str.size())
+	if (suffix.size() > str.size()) {
 		return false;
+	}
 	return equal(suffix.rbegin(), suffix.rend(), str.rbegin());
 }
 
 string StringUtil::Repeat(const string &str, idx_t n) {
-	ostringstream os;
-	if (n == 0 || str.empty()) {
-		return (os.str());
-	}
-	for (int i = 0; i < static_cast<int>(n); i++) {
+	std::ostringstream os;
+	for (idx_t i = 0; i < n; i++) {
 		os << str;
 	}
 	return (os.str());
 }
 
 vector<string> StringUtil::Split(const string &str, char delimiter) {
-	stringstream ss(str);
+	std::stringstream ss(str);
 	vector<string> lines;
 	string temp;
 	while (getline(ss, temp, delimiter)) {
 		lines.push_back(temp);
-	} // WHILE
+	}
 	return (lines);
+}
+
+namespace string_util_internal {
+
+inline void SkipSpaces(const string &str, idx_t &index) {
+	while (index < str.size() && std::isspace(str[index])) {
+		index++;
+	}
+}
+
+inline void ConsumeLetter(const string &str, idx_t &index, char expected) {
+	if (index >= str.size() || str[index] != expected) {
+		throw ParserException("Invalid quoted list: %s", str);
+	}
+
+	index++;
+}
+
+template <typename F>
+inline void TakeWhile(const string &str, idx_t &index, const F &cond, string &taker) {
+	while (index < str.size() && cond(str[index])) {
+		taker.push_back(str[index]);
+		index++;
+	}
+}
+
+inline string TakePossiblyQuotedItem(const string &str, idx_t &index, char delimiter, char quote) {
+	string entry;
+
+	if (str[index] == quote) {
+		index++;
+		TakeWhile(
+		    str, index, [quote](char c) { return c != quote; }, entry);
+		ConsumeLetter(str, index, quote);
+	} else {
+		TakeWhile(
+		    str, index, [delimiter, quote](char c) { return c != delimiter && c != quote && !std::isspace(c); }, entry);
+	}
+
+	return entry;
+}
+
+} // namespace string_util_internal
+
+vector<string> StringUtil::SplitWithQuote(const string &str, char delimiter, char quote) {
+	vector<string> entries;
+	idx_t i = 0;
+
+	string_util_internal::SkipSpaces(str, i);
+	while (i < str.size()) {
+		if (!entries.empty()) {
+			string_util_internal::ConsumeLetter(str, i, delimiter);
+		}
+
+		entries.emplace_back(string_util_internal::TakePossiblyQuotedItem(str, i, delimiter, quote));
+		string_util_internal::SkipSpaces(str, i);
+	}
+
+	return entries;
 }
 
 string StringUtil::Join(const vector<string> &input, const string &separator) {
 	return StringUtil::Join(input, input.size(), separator, [](const string &s) { return s; });
 }
 
-string StringUtil::Prefix(const string &str, const string &prefix) {
-	vector<string> lines = StringUtil::Split(str, '\n');
-	if (lines.empty())
-		return ("");
-
-	ostringstream os;
-	for (idx_t i = 0, cnt = lines.size(); i < cnt; i++) {
-		if (i > 0)
-			os << endl;
-		os << prefix << lines[i];
-	} // FOR
-	return (os.str());
-}
-
-// http://ubuntuforums.org/showpost.php?p=10215516&postcount=5
-string StringUtil::FormatSize(idx_t bytes) {
-	double BASE = 1024;
-	double KB = BASE;
-	double MB = KB * BASE;
-	double GB = MB * BASE;
-
-	ostringstream os;
-
-	if (bytes >= GB) {
-		os << fixed << setprecision(2) << (bytes / GB) << " GB";
-	} else if (bytes >= MB) {
-		os << fixed << setprecision(2) << (bytes / MB) << " MB";
-	} else if (bytes >= KB) {
-		os << fixed << setprecision(2) << (bytes / KB) << " KB";
-	} else {
-		os << to_string(bytes) + " bytes";
+string StringUtil::BytesToHumanReadableString(idx_t bytes) {
+	string db_size;
+	auto kilobytes = bytes / 1000;
+	auto megabytes = kilobytes / 1000;
+	kilobytes -= megabytes * 1000;
+	auto gigabytes = megabytes / 1000;
+	megabytes -= gigabytes * 1000;
+	auto terabytes = gigabytes / 1000;
+	gigabytes -= terabytes * 1000;
+	auto petabytes = terabytes / 1000;
+	terabytes -= petabytes * 1000;
+	if (petabytes > 0) {
+		return to_string(petabytes) + "." + to_string(terabytes / 100) + "PB";
 	}
-	return (os.str());
+	if (terabytes > 0) {
+		return to_string(terabytes) + "." + to_string(gigabytes / 100) + "TB";
+	} else if (gigabytes > 0) {
+		return to_string(gigabytes) + "." + to_string(megabytes / 100) + "GB";
+	} else if (megabytes > 0) {
+		return to_string(megabytes) + "." + to_string(kilobytes / 100) + "MB";
+	} else if (kilobytes > 0) {
+		return to_string(kilobytes) + "KB";
+	} else {
+		return to_string(bytes) + (bytes == 1 ? " byte" : " bytes");
+	}
 }
 
 string StringUtil::Upper(const string &str) {
 	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(), [](unsigned char c) { return toupper(c); });
+	transform(copy.begin(), copy.end(), copy.begin(), [](unsigned char c) { return std::toupper(c); });
 	return (copy);
 }
 
 string StringUtil::Lower(const string &str) {
 	string copy(str);
-	transform(copy.begin(), copy.end(), copy.begin(), [](unsigned char c) { return tolower(c); });
+	transform(copy.begin(), copy.end(), copy.begin(), [](unsigned char c) { return StringUtil::CharacterToLower(c); });
 	return (copy);
 }
 
-// http://stackoverflow.com/a/8098080
-string StringUtil::Format(const string fmt_str, ...) {
-	// Reserve two times as much as the length of the fmt_str
-	int final_n, n = ((int)fmt_str.size()) * 2;
-	string str;
-	unique_ptr<char[]> formatted;
-	va_list ap;
-
-	while (1) {
-		// Wrap the plain char array into the unique_ptr
-		formatted.reset(new char[n + 1]);
-		strcpy(&formatted[0], fmt_str.c_str());
-		va_start(ap, fmt_str);
-		final_n = vsnprintf(&formatted[0], n, fmt_str.c_str(), ap);
-		va_end(ap);
-		if (final_n < 0 || final_n >= n)
-			n += abs(final_n - n + 1);
-		else
-			break;
-	}
-	return string(formatted.get());
+bool StringUtil::IsLower(const string &str) {
+	return str == Lower(str);
 }
 
-string StringUtil::VFormat(const string fmt_str, va_list args) {
-	va_list args_copy;
+// Jenkins hash function: https://en.wikipedia.org/wiki/Jenkins_hash_function
+uint64_t StringUtil::CIHash(const string &str) {
+	uint32_t hash = 0;
+	for (auto c : str) {
+		hash += StringUtil::CharacterToLower(c);
+		hash += hash << 10;
+		hash ^= hash >> 6;
+	}
+	hash += hash << 3;
+	hash ^= hash >> 11;
+	hash += hash << 15;
+	return hash;
+}
 
-	unique_ptr<char[]> formatted;
-	// make a copy of the args as we can only use it once
-	va_copy(args_copy, args);
-
-	// first get the amount of characters we need
-	const auto n = vsnprintf(nullptr, 0, fmt_str.c_str(), args) + 1;
-
-	// now allocate the string and do the actual printing
-	formatted.reset(new char[n]);
-	(void)vsnprintf(&formatted[0], n, fmt_str.c_str(), args_copy);
-	return string(formatted.get());
+bool StringUtil::CIEquals(const string &l1, const string &l2) {
+	if (l1.size() != l2.size()) {
+		return false;
+	}
+	for (idx_t c = 0; c < l1.size(); c++) {
+		if (StringUtil::CharacterToLower(l1[c]) != StringUtil::CharacterToLower(l2[c])) {
+			return false;
+		}
+	}
+	return true;
 }
 
 vector<string> StringUtil::Split(const string &input, const string &split) {
@@ -172,18 +237,21 @@ vector<string> StringUtil::Split(const string &input, const string &split) {
 
 		// Push the substring [last, next) on to splits
 		string substr = input.substr(last, next - last);
-		if (substr.empty() == false) {
+		if (!substr.empty()) {
 			splits.push_back(substr);
 		}
 		last = next + split_len;
+	}
+	if (splits.empty()) {
+		splits.push_back(input);
 	}
 	return splits;
 }
 
 string StringUtil::Replace(string source, const string &from, const string &to) {
-	if (from.empty())
-		return source;
-	;
+	if (from.empty()) {
+		throw InternalException("Invalid argument to StringUtil::Replace - empty FROM");
+	}
 	idx_t start_pos = 0;
 	while ((start_pos = source.find(from, start_pos)) != string::npos) {
 		source.replace(start_pos, from.length(), to);
@@ -192,3 +260,116 @@ string StringUtil::Replace(string source, const string &from, const string &to) 
 	}
 	return source;
 }
+
+vector<string> StringUtil::TopNStrings(vector<pair<string, idx_t>> scores, idx_t n, idx_t threshold) {
+	if (scores.empty()) {
+		return vector<string>();
+	}
+	sort(scores.begin(), scores.end(), [](const pair<string, idx_t> &a, const pair<string, idx_t> &b) -> bool {
+		return a.second < b.second || (a.second == b.second && a.first.size() < b.first.size());
+	});
+	vector<string> result;
+	result.push_back(scores[0].first);
+	for (idx_t i = 1; i < MinValue<idx_t>(scores.size(), n); i++) {
+		if (scores[i].second > threshold) {
+			break;
+		}
+		result.push_back(scores[i].first);
+	}
+	return result;
+}
+
+struct LevenshteinArray {
+	LevenshteinArray(idx_t len1, idx_t len2) : len1(len1) {
+		dist = make_unsafe_uniq_array<idx_t>(len1 * len2);
+	}
+
+	idx_t &Score(idx_t i, idx_t j) {
+		return dist[GetIndex(i, j)];
+	}
+
+private:
+	idx_t len1;
+	unsafe_unique_array<idx_t> dist;
+
+	idx_t GetIndex(idx_t i, idx_t j) {
+		return j * len1 + i;
+	}
+};
+
+// adapted from https://en.wikibooks.org/wiki/Algorithm_Implementation/Strings/Levenshtein_distance#C++
+idx_t StringUtil::LevenshteinDistance(const string &s1_p, const string &s2_p, idx_t not_equal_penalty) {
+	auto s1 = StringUtil::Lower(s1_p);
+	auto s2 = StringUtil::Lower(s2_p);
+	idx_t len1 = s1.size();
+	idx_t len2 = s2.size();
+	if (len1 == 0) {
+		return len2;
+	}
+	if (len2 == 0) {
+		return len1;
+	}
+	LevenshteinArray array(len1 + 1, len2 + 1);
+	array.Score(0, 0) = 0;
+	for (idx_t i = 0; i <= len1; i++) {
+		array.Score(i, 0) = i;
+	}
+	for (idx_t j = 0; j <= len2; j++) {
+		array.Score(0, j) = j;
+	}
+	for (idx_t i = 1; i <= len1; i++) {
+		for (idx_t j = 1; j <= len2; j++) {
+			// d[i][j] = std::min({ d[i - 1][j] + 1,
+			//                      d[i][j - 1] + 1,
+			//                      d[i - 1][j - 1] + (s1[i - 1] == s2[j - 1] ? 0 : 1) });
+			int equal = s1[i - 1] == s2[j - 1] ? 0 : not_equal_penalty;
+			idx_t adjacent_score1 = array.Score(i - 1, j) + 1;
+			idx_t adjacent_score2 = array.Score(i, j - 1) + 1;
+			idx_t adjacent_score3 = array.Score(i - 1, j - 1) + equal;
+
+			idx_t t = MinValue<idx_t>(adjacent_score1, adjacent_score2);
+			array.Score(i, j) = MinValue<idx_t>(t, adjacent_score3);
+		}
+	}
+	return array.Score(len1, len2);
+}
+
+idx_t StringUtil::SimilarityScore(const string &s1, const string &s2) {
+	return LevenshteinDistance(s1, s2, 3);
+}
+
+vector<string> StringUtil::TopNLevenshtein(const vector<string> &strings, const string &target, idx_t n,
+                                           idx_t threshold) {
+	vector<pair<string, idx_t>> scores;
+	scores.reserve(strings.size());
+	for (auto &str : strings) {
+		if (target.size() < str.size()) {
+			scores.emplace_back(str, SimilarityScore(str.substr(0, target.size()), target));
+		} else {
+			scores.emplace_back(str, SimilarityScore(str, target));
+		}
+	}
+	return TopNStrings(scores, n, threshold);
+}
+
+string StringUtil::CandidatesMessage(const vector<string> &candidates, const string &candidate) {
+	string result_str;
+	if (!candidates.empty()) {
+		result_str = "\n" + candidate + ": ";
+		for (idx_t i = 0; i < candidates.size(); i++) {
+			if (i > 0) {
+				result_str += ", ";
+			}
+			result_str += "\"" + candidates[i] + "\"";
+		}
+	}
+	return result_str;
+}
+
+string StringUtil::CandidatesErrorMessage(const vector<string> &strings, const string &target,
+                                          const string &message_prefix, idx_t n) {
+	auto closest_strings = StringUtil::TopNLevenshtein(strings, target, n);
+	return StringUtil::CandidatesMessage(closest_strings, message_prefix);
+}
+
+} // namespace duckdb

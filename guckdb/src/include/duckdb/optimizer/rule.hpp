@@ -16,7 +16,7 @@ class ExpressionRewriter;
 
 class Rule {
 public:
-	Rule(ExpressionRewriter &rewriter) : rewriter(rewriter) {
+	explicit Rule(ExpressionRewriter &rewriter) : rewriter(rewriter) {
 	}
 	virtual ~Rule() {
 	}
@@ -28,7 +28,9 @@ public:
 	//! The expression matcher of the rule
 	unique_ptr<ExpressionMatcher> root;
 
-	virtual unique_ptr<Expression> Apply(LogicalOperator &op, vector<Expression *> &bindings, bool &fixed_point) = 0;
+	ClientContext &GetContext() const;
+	virtual unique_ptr<Expression> Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
+	                                     bool &fixed_point, bool is_root) = 0;
 };
 
 } // namespace duckdb

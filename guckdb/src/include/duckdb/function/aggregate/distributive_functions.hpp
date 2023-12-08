@@ -11,20 +11,9 @@
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/common/types/null_value.hpp"
+#include "duckdb/function/built_in_functions.hpp"
 
 namespace duckdb {
-
-struct BitAndFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct BitOrFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct BitXorFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
 
 struct CountStarFun {
 	static AggregateFunction GetFunction();
@@ -39,24 +28,8 @@ struct CountFun {
 };
 
 struct FirstFun {
-	static AggregateFunction GetFunction(SQLType type);
+	static AggregateFunction GetFunction(const LogicalType &type);
 
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct MaxFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct MinFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct SumFun {
-	static void RegisterFunction(BuiltinFunctions &set);
-};
-
-struct StringAggFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 

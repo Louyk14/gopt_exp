@@ -15,11 +15,15 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 class SQLStatement;
 
-class AlterTableStatement;
+class AlterStatement;
+class AttachStatement;
+class CallStatement;
 class CopyStatement;
 class CreateStatement;
+class DetachStatement;
 class DeleteStatement;
 class DropStatement;
+class ExtensionStatement;
 class InsertStatement;
 class SelectStatement;
 class TransactionStatement;
@@ -27,9 +31,17 @@ class UpdateStatement;
 class PrepareStatement;
 class ExecuteStatement;
 class PragmaStatement;
+class ShowStatement;
 class ExplainStatement;
+class ExportStatement;
 class VacuumStatement;
 class RelationStatement;
+class SetStatement;
+class SetVariableStatement;
+class ResetVariableStatement;
+class LoadStatement;
+class LogicalPlanStatement;
+class MultiStatement;
 
 //===--------------------------------------------------------------------===//
 // Query Node
@@ -38,12 +50,14 @@ class QueryNode;
 class SelectNode;
 class SetOperationNode;
 class RecursiveCTENode;
+class CTENode;
 
 //===--------------------------------------------------------------------===//
 // Expressions
 //===--------------------------------------------------------------------===//
 class ParsedExpression;
 
+class BetweenExpression;
 class CaseExpression;
 class CastExpression;
 class CollateExpression;
@@ -53,8 +67,10 @@ class ConjunctionExpression;
 class ConstantExpression;
 class DefaultExpression;
 class FunctionExpression;
+class LambdaExpression;
 class OperatorExpression;
 class ParameterExpression;
+class PositionalReferenceExpression;
 class StarExpression;
 class SubqueryExpression;
 class WindowExpression;
@@ -67,6 +83,7 @@ class Constraint;
 class NotNullConstraint;
 class CheckConstraint;
 class UniqueConstraint;
+class ForeignKeyConstraint;
 
 //===--------------------------------------------------------------------===//
 // TableRefs
@@ -74,11 +91,16 @@ class UniqueConstraint;
 class TableRef;
 
 class BaseTableRef;
-class CrossProductRef;
 class JoinRef;
 class SubqueryRef;
 class TableFunctionRef;
 class EmptyTableRef;
 class ExpressionListRef;
+class PivotRef;
+
+//===--------------------------------------------------------------------===//
+// Other
+//===--------------------------------------------------------------------===//
+struct SampleOptions;
 
 } // namespace duckdb

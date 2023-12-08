@@ -15,10 +15,18 @@ namespace duckdb {
 
 class PrepareStatement : public SQLStatement {
 public:
-	PrepareStatement() : SQLStatement(StatementType::PREPARE_STATEMENT), statement(nullptr), name("") {
-	}
+	static constexpr const StatementType TYPE = StatementType::PREPARE_STATEMENT;
+
+public:
+	PrepareStatement();
 
 	unique_ptr<SQLStatement> statement;
 	string name;
+
+protected:
+	PrepareStatement(const PrepareStatement &other);
+
+public:
+	unique_ptr<SQLStatement> Copy() const override;
 };
 } // namespace duckdb

@@ -16,18 +16,23 @@ namespace duckdb {
 //! Physically CREATE TABLE statement
 class PhysicalCreateTable : public PhysicalOperator {
 public:
-	PhysicalCreateTable(LogicalOperator &op, SchemaCatalogEntry *schema, unique_ptr<BoundCreateTableInfo> info)
-	    : PhysicalOperator(PhysicalOperatorType::CREATE, op.types), schema(schema), info(move(info)) {
-	}
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::CREATE_TABLE;
+
+public:
+	PhysicalCreateTable(LogicalOperator &op, SchemaCatalogEntry &schema, unique_ptr<BoundCreateTableInfo> info,
+	                    idx_t estimated_cardinality);
 
 	//! Schema to insert to
-	SchemaCatalogEntry *schema;
+	SchemaCatalogEntry &schema;
 	//! Table name to create
 	unique_ptr<BoundCreateTableInfo> info;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
+	// Source interface
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+
+	bool IsSource() const override {
+		return true;
+	}
 };
 } // namespace duckdb

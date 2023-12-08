@@ -19,30 +19,24 @@ namespace duckdb {
 //! when dealing with subqueries.
 class BoundExpression : public ParsedExpression {
 public:
-	BoundExpression(unique_ptr<Expression> expr, unique_ptr<ParsedExpression> parsed_expr, SQLType sql_type)
-	    : ParsedExpression(ExpressionType::INVALID, ExpressionClass::BOUND_EXPRESSION), expr(move(expr)),
-	      parsed_expr(move(parsed_expr)), sql_type(sql_type) {
-	}
-
-	unique_ptr<Expression> expr;
-	unique_ptr<ParsedExpression> parsed_expr;
-	SQLType sql_type;
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_EXPRESSION;
 
 public:
-	string ToString() const override {
-		return expr->ToString();
-	}
+	BoundExpression(unique_ptr<Expression> expr);
 
-	bool Equals(const BaseExpression *other) const override {
-		return parsed_expr->Equals(other);
-	}
-	hash_t Hash() const override {
-		return parsed_expr->Hash();
-	}
+	unique_ptr<Expression> expr;
 
-	unique_ptr<ParsedExpression> Copy() const override {
-		throw SerializationException("Cannot copy or serialize bound expression");
-	}
+public:
+	static unique_ptr<Expression> &GetExpression(ParsedExpression &expr);
+
+	string ToString() const override;
+
+	bool Equals(const BaseExpression &other) const override;
+	hash_t Hash() const override;
+
+	unique_ptr<ParsedExpression> Copy() const override;
+
+	void Serialize(Serializer &serializer) const override;
 };
 
 } // namespace duckdb

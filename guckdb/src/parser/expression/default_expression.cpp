@@ -2,8 +2,10 @@
 
 #include "duckdb/common/exception.hpp"
 
-using namespace duckdb;
-using namespace std;
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
+
+namespace duckdb {
 
 DefaultExpression::DefaultExpression() : ParsedExpression(ExpressionType::VALUE_DEFAULT, ExpressionClass::DEFAULT) {
 }
@@ -13,11 +15,9 @@ string DefaultExpression::ToString() const {
 }
 
 unique_ptr<ParsedExpression> DefaultExpression::Copy() const {
-	auto copy = make_unique<DefaultExpression>();
+	auto copy = make_uniq<DefaultExpression>();
 	copy->CopyProperties(*this);
-	return move(copy);
+	return std::move(copy);
 }
 
-unique_ptr<ParsedExpression> DefaultExpression::Deserialize(ExpressionType type, Deserializer &source) {
-	return make_unique<DefaultExpression>();
-}
+} // namespace duckdb

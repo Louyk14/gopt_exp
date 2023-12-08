@@ -1,8 +1,7 @@
 #include "duckdb/common/enums/expression_type.hpp"
 
 #include "duckdb/common/exception.hpp"
-
-using namespace std;
+#include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
 
@@ -32,6 +31,8 @@ string ExpressionTypeToString(ExpressionType type) {
 		return "IN";
 	case ExpressionType::COMPARE_DISTINCT_FROM:
 		return "DISTINCT_FROM";
+	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
+		return "NOT_DISTINCT_FROM";
 	case ExpressionType::CONJUNCTION_AND:
 		return "AND";
 	case ExpressionType::CONJUNCTION_OR:
@@ -66,6 +67,8 @@ string ExpressionTypeToString(ExpressionType type) {
 		return "FIRST_VALUE";
 	case ExpressionType::WINDOW_LAST_VALUE:
 		return "LAST_VALUE";
+	case ExpressionType::WINDOW_NTH_VALUE:
+		return "NTH_VALUE";
 	case ExpressionType::WINDOW_CUME_DIST:
 		return "CUME_DIST";
 	case ExpressionType::WINDOW_LEAD:
@@ -82,6 +85,12 @@ string ExpressionTypeToString(ExpressionType type) {
 		return "NULLIF";
 	case ExpressionType::OPERATOR_COALESCE:
 		return "COALESCE";
+	case ExpressionType::ARRAY_EXTRACT:
+		return "ARRAY_EXTRACT";
+	case ExpressionType::ARRAY_SLICE:
+		return "ARRAY_SLICE";
+	case ExpressionType::STRUCT_EXTRACT:
+		return "STRUCT_EXTRACT";
 	case ExpressionType::SUBQUERY:
 		return "SUBQUERY";
 	case ExpressionType::STAR:
@@ -104,8 +113,6 @@ string ExpressionTypeToString(ExpressionType type) {
 		return "COMPARE_NOT_BETWEEN";
 	case ExpressionType::VALUE_DEFAULT:
 		return "VALUE_DEFAULT";
-	case ExpressionType::COMMON_SUBEXPRESSION:
-		return "COMMON_SUBEXPRESSION";
 	case ExpressionType::BOUND_REF:
 		return "BOUND_REF";
 	case ExpressionType::BOUND_COLUMN_REF:
@@ -114,52 +121,112 @@ string ExpressionTypeToString(ExpressionType type) {
 		return "BOUND_FUNCTION";
 	case ExpressionType::BOUND_AGGREGATE:
 		return "BOUND_AGGREGATE";
+	case ExpressionType::GROUPING_FUNCTION:
+		return "GROUPING";
+	case ExpressionType::ARRAY_CONSTRUCTOR:
+		return "ARRAY_CONSTRUCTOR";
+	case ExpressionType::TABLE_STAR:
+		return "TABLE_STAR";
+	case ExpressionType::BOUND_UNNEST:
+		return "BOUND_UNNEST";
+	case ExpressionType::COLLATE:
+		return "COLLATE";
+	case ExpressionType::POSITIONAL_REFERENCE:
+		return "POSITIONAL_REFERENCE";
+	case ExpressionType::BOUND_LAMBDA_REF:
+		return "BOUND_LAMBDA_REF";
+	case ExpressionType::LAMBDA:
+		return "LAMBDA";
+	case ExpressionType::ARROW:
+		return "ARROW";
 	case ExpressionType::INVALID:
-	default:
-		return "INVALID";
+		break;
 	}
+	return "INVALID";
 }
-
-
-ExpressionType ExpressionTypeFromString(string type) {
-    if (type == "IS_NULL")
-        return ExpressionType::OPERATOR_IS_NULL;
-    else if (type == "IS_NOT_NULL")
-        return ExpressionType::OPERATOR_IS_NOT_NULL;
-    else if (type == "EQUAL")
-        return ExpressionType::COMPARE_EQUAL;
-    else if (type == "GREATERTHAN")
-        return ExpressionType::COMPARE_GREATERTHAN;
-    else if (type == "NOTEQUAL")
-        return ExpressionType::COMPARE_NOTEQUAL;
-    else if (type == "GREATERTHANOREQUALTO")
-        return ExpressionType::COMPARE_GREATERTHANOREQUALTO;
-    else if (type == "LESSTHAN")
-        return ExpressionType::COMPARE_LESSTHAN;
-    else if (type == "LESSTHANOREQUALTO")
-        return ExpressionType::COMPARE_LESSTHANOREQUALTO;
-    else if (type == "CONSTANT")
-        return ExpressionType::VALUE_CONSTANT;
-    else if (type == "BOUND_FUNCTION")
-        return ExpressionType::BOUND_FUNCTION;
-    else if (type == "BOUND_AGGREGATE")
-        return ExpressionType::BOUND_AGGREGATE;
-    else if (type == "BOUND_REF")
-        return ExpressionType::BOUND_REF;
-    else if (type == "CAST")
-        return ExpressionType::OPERATOR_CAST;
-    else if (type == "COMPARE_BETWEEN")
-        return ExpressionType::COMPARE_BETWEEN;
-    else if (type == "OR")
-        return ExpressionType::CONJUNCTION_OR;
-    else if (type == "IN")
-        return ExpressionType::COMPARE_IN;
+string ExpressionClassToString(ExpressionClass type) {
+	switch (type) {
+	case ExpressionClass::INVALID:
+		return "INVALID";
+	case ExpressionClass::AGGREGATE:
+		return "AGGREGATE";
+	case ExpressionClass::CASE:
+		return "CASE";
+	case ExpressionClass::CAST:
+		return "CAST";
+	case ExpressionClass::COLUMN_REF:
+		return "COLUMN_REF";
+	case ExpressionClass::COMPARISON:
+		return "COMPARISON";
+	case ExpressionClass::CONJUNCTION:
+		return "CONJUNCTION";
+	case ExpressionClass::CONSTANT:
+		return "CONSTANT";
+	case ExpressionClass::DEFAULT:
+		return "DEFAULT";
+	case ExpressionClass::FUNCTION:
+		return "FUNCTION";
+	case ExpressionClass::OPERATOR:
+		return "OPERATOR";
+	case ExpressionClass::STAR:
+		return "STAR";
+	case ExpressionClass::SUBQUERY:
+		return "SUBQUERY";
+	case ExpressionClass::WINDOW:
+		return "WINDOW";
+	case ExpressionClass::PARAMETER:
+		return "PARAMETER";
+	case ExpressionClass::COLLATE:
+		return "COLLATE";
+	case ExpressionClass::LAMBDA:
+		return "LAMBDA";
+	case ExpressionClass::POSITIONAL_REFERENCE:
+		return "POSITIONAL_REFERENCE";
+	case ExpressionClass::BETWEEN:
+		return "BETWEEN";
+	case ExpressionClass::BOUND_AGGREGATE:
+		return "BOUND_AGGREGATE";
+	case ExpressionClass::BOUND_CASE:
+		return "BOUND_CASE";
+	case ExpressionClass::BOUND_CAST:
+		return "BOUND_CAST";
+	case ExpressionClass::BOUND_COLUMN_REF:
+		return "BOUND_COLUMN_REF";
+	case ExpressionClass::BOUND_COMPARISON:
+		return "BOUND_COMPARISON";
+	case ExpressionClass::BOUND_CONJUNCTION:
+		return "BOUND_CONJUNCTION";
+	case ExpressionClass::BOUND_CONSTANT:
+		return "BOUND_CONSTANT";
+	case ExpressionClass::BOUND_DEFAULT:
+		return "BOUND_DEFAULT";
+	case ExpressionClass::BOUND_FUNCTION:
+		return "BOUND_FUNCTION";
+	case ExpressionClass::BOUND_OPERATOR:
+		return "BOUND_OPERATOR";
+	case ExpressionClass::BOUND_PARAMETER:
+		return "BOUND_PARAMETER";
+	case ExpressionClass::BOUND_REF:
+		return "BOUND_REF";
+	case ExpressionClass::BOUND_SUBQUERY:
+		return "BOUND_SUBQUERY";
+	case ExpressionClass::BOUND_WINDOW:
+		return "BOUND_WINDOW";
+	case ExpressionClass::BOUND_BETWEEN:
+		return "BOUND_BETWEEN";
+	case ExpressionClass::BOUND_UNNEST:
+		return "BOUND_UNNEST";
+	case ExpressionClass::BOUND_LAMBDA:
+		return "BOUND_LAMBDA";
+	case ExpressionClass::BOUND_EXPRESSION:
+		return "BOUND_EXPRESSION";
+	default:
+		return "ExpressionClass::!!UNIMPLEMENTED_CASE!!";
+	}
 }
 
 string ExpressionTypeToOperator(ExpressionType type) {
 	switch (type) {
-	case ExpressionType::OPERATOR_NOT:
-		return "!";
 	case ExpressionType::COMPARE_EQUAL:
 		return "=";
 	case ExpressionType::COMPARE_NOTEQUAL:
@@ -172,18 +239,20 @@ string ExpressionTypeToOperator(ExpressionType type) {
 		return "<=";
 	case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		return ">=";
+	case ExpressionType::COMPARE_DISTINCT_FROM:
+		return "IS DISTINCT FROM";
+	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
+		return "IS NOT DISTINCT FROM";
 	case ExpressionType::CONJUNCTION_AND:
 		return "AND";
 	case ExpressionType::CONJUNCTION_OR:
 		return "OR";
-	case ExpressionType::STAR:
-		return "*";
 	default:
 		return "";
 	}
 }
 
-ExpressionType NegateComparisionExpression(ExpressionType type) {
+ExpressionType NegateComparisonExpression(ExpressionType type) {
 	ExpressionType negated_type = ExpressionType::INVALID;
 	switch (type) {
 	case ExpressionType::COMPARE_EQUAL:
@@ -204,16 +273,17 @@ ExpressionType NegateComparisionExpression(ExpressionType type) {
 	case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		negated_type = ExpressionType::COMPARE_LESSTHAN;
 		break;
-
 	default:
-		throw Exception("Unsupported comparison type in negation");
+		throw InternalException("Unsupported comparison type in negation");
 	}
 	return negated_type;
 }
 
-ExpressionType FlipComparisionExpression(ExpressionType type) {
+ExpressionType FlipComparisonExpression(ExpressionType type) {
 	ExpressionType flipped_type = ExpressionType::INVALID;
 	switch (type) {
+	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
+	case ExpressionType::COMPARE_DISTINCT_FROM:
 	case ExpressionType::COMPARE_NOTEQUAL:
 	case ExpressionType::COMPARE_EQUAL:
 		flipped_type = type;
@@ -230,11 +300,27 @@ ExpressionType FlipComparisionExpression(ExpressionType type) {
 	case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		flipped_type = ExpressionType::COMPARE_LESSTHANOREQUALTO;
 		break;
-
 	default:
-		throw Exception("Unsupported comparison type in flip");
+		throw InternalException("Unsupported comparison type in flip");
 	}
 	return flipped_type;
+}
+
+ExpressionType OperatorToExpressionType(const string &op) {
+	if (op == "=" || op == "==") {
+		return ExpressionType::COMPARE_EQUAL;
+	} else if (op == "!=" || op == "<>") {
+		return ExpressionType::COMPARE_NOTEQUAL;
+	} else if (op == "<") {
+		return ExpressionType::COMPARE_LESSTHAN;
+	} else if (op == ">") {
+		return ExpressionType::COMPARE_GREATERTHAN;
+	} else if (op == "<=") {
+		return ExpressionType::COMPARE_LESSTHANOREQUALTO;
+	} else if (op == ">=") {
+		return ExpressionType::COMPARE_GREATERTHANOREQUALTO;
+	}
+	return ExpressionType::INVALID;
 }
 
 } // namespace duckdb

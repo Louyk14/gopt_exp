@@ -1,29 +1,37 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 
-#include "duckdb/common/serializer.hpp"
+#include "duckdb/common/to_string.hpp"
 #include "duckdb/common/types/hash.hpp"
+#include "duckdb/main/config.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-BoundReferenceExpression::BoundReferenceExpression(string alias, TypeId type, idx_t index)
-    : Expression(ExpressionType::BOUND_REF, ExpressionClass::BOUND_REF, type), index(index) {
-	this->alias = alias;
+BoundReferenceExpression::BoundReferenceExpression(string alias, LogicalType type, idx_t index)
+    : Expression(ExpressionType::BOUND_REF, ExpressionClass::BOUND_REF, std::move(type)), index(index) {
+	this->alias = std::move(alias);
 }
-BoundReferenceExpression::BoundReferenceExpression(TypeId type, idx_t index)
-    : BoundReferenceExpression(string(), type, index) {
+BoundReferenceExpression::BoundReferenceExpression(LogicalType type, idx_t index)
+    : BoundReferenceExpression(string(), std::move(type), index) {
 }
 
 string BoundReferenceExpression::ToString() const {
-	return "#" + std::to_string(index);
+#ifdef DEBUG
+	if (DBConfigOptions::debug_print_bindings) {
+		return "#" + to_string(index);
+	}
+#endif
+	if (!alias.empty()) {
+		return alias;
+	}
+	return "#" + to_string(index);
 }
 
-bool BoundReferenceExpression::Equals(const BaseExpression *other_) const {
-	if (!BaseExpression::Equals(other_)) {
+bool BoundReferenceExpression::Equals(const BaseExpression &other_p) const {
+	if (!Expression::Equals(other_p)) {
 		return false;
 	}
-	auto other = (BoundReferenceExpression *)other_;
-	return other->index == index;
+	auto &other = other_p.Cast<BoundReferenceExpression>();
+	return other.index == index;
 }
 
 hash_t BoundReferenceExpression::Hash() const {
@@ -31,27 +39,7 @@ hash_t BoundReferenceExpression::Hash() const {
 }
 
 unique_ptr<Expression> BoundReferenceExpression::Copy() {
-	return make_unique<BoundReferenceExpression>(alias, return_type, index);
+	return make_uniq<BoundReferenceExpression>(alias, return_type, index);
 }
 
-substrait::AggregateFunction* BoundReferenceExpression::ToAggregateFunction() const {
-    substrait::AggregateFunction* aggregate_function = new substrait::AggregateFunction();
-    aggregate_function->set_exp_type(ExpressionTypeToString(type));
-
-    aggregate_function->set_binder(alias);
-
-    substrait::FunctionArgument* arg = new substrait::FunctionArgument();
-    string* index_str = new string(to_string(index));
-    arg->set_allocated_enum_(index_str);
-    *aggregate_function->add_arguments() = *arg;
-    delete arg;
-
-    substrait::FunctionArgument* child = new substrait::FunctionArgument();
-    string* type_str = new string(TypeIdToString(return_type));
-    child->set_allocated_enum_(type_str);
-    *aggregate_function->add_childs() = *child;
-    delete child;
-
-    return aggregate_function;
-}
-
+} // namespace duckdb

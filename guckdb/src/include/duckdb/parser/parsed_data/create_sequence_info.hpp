@@ -9,16 +9,27 @@
 #pragma once
 
 #include "duckdb/parser/parsed_data/create_info.hpp"
-
-#include <limits>
+#include "duckdb/common/limits.hpp"
 
 namespace duckdb {
 
+enum class SequenceInfo : uint8_t {
+	// Sequence start
+	SEQ_START,
+	// Sequence increment
+	SEQ_INC,
+	// Sequence minimum value
+	SEQ_MIN,
+	// Sequence maximum value
+	SEQ_MAX,
+	// Sequence cycle option
+	SEQ_CYCLE,
+	// Sequence owner table
+	SEQ_OWN
+};
+
 struct CreateSequenceInfo : public CreateInfo {
-	CreateSequenceInfo()
-	    : CreateInfo(CatalogType::SEQUENCE), name(string()), usage_count(0), increment(1), min_value(1),
-	      max_value(std::numeric_limits<int64_t>::max()), start_value(1), cycle(false) {
-	}
+	CreateSequenceInfo();
 
 	//! Sequence name to create
 	string name;
@@ -34,6 +45,13 @@ struct CreateSequenceInfo : public CreateInfo {
 	int64_t start_value;
 	//! Whether or not the sequence cycles
 	bool cycle;
+
+public:
+	unique_ptr<CreateInfo> Copy() const override;
+
+public:
+	DUCKDB_API void Serialize(Serializer &serializer) const override;
+	DUCKDB_API static unique_ptr<CreateInfo> Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

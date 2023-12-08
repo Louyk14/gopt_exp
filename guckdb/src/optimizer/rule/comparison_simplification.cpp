@@ -4,52 +4,75 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 ComparisonSimplificationRule::ComparisonSimplificationRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
 	// match on a ComparisonExpression that has a ConstantExpression as a check
-	auto op = make_unique<ComparisonExpressionMatcher>();
-	op->matchers.push_back(make_unique<FoldableConstantMatcher>());
+	auto op = make_uniq<ComparisonExpressionMatcher>();
+	op->matchers.push_back(make_uniq<FoldableConstantMatcher>());
 	op->policy = SetMatcher::Policy::SOME;
-	root = move(op);
+	root = std::move(op);
 }
 
-unique_ptr<Expression> ComparisonSimplificationRule::Apply(LogicalOperator &op, vector<Expression *> &bindings,
-                                                           bool &changes_made) {
-	assert(bindings[0]->expression_class == ExpressionClass::BOUND_COMPARISON);
-	auto expr = (BoundComparisonExpression *)bindings[0];
-	auto constant_expr = bindings[1];
-	bool column_ref_left = expr->left.get() != constant_expr;
-	auto column_ref_expr = !column_ref_left ? expr->right.get() : expr->left.get();
+unique_ptr<Expression> ComparisonSimplificationRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
+                                                           bool &changes_made, bool is_root) {
+	auto &expr = bindings[0].get().Cast<BoundComparisonExpression>();
+	auto &constant_expr = bindings[1].get();
+	bool column_ref_left = expr.left.get() != &constant_expr;
+	auto column_ref_expr = !column_ref_left ? expr.right.get() : expr.left.get();
 	// the constant_expr is a scalar expression that we have to fold
 	// use an ExpressionExecutor to execute the expression
-	assert(constant_expr->IsFoldable());
-	auto constant_value = ExpressionExecutor::EvaluateScalar(*constant_expr);
-	if (constant_value.is_null) {
-		// comparison with constant NULL, return NULL
-		return make_unique<BoundConstantExpression>(Value(TypeId::BOOL));
+	D_ASSERT(constant_expr.IsFoldable());
+	Value constant_value;
+	if (!ExpressionExecutor::TryEvaluateScalar(GetContext(), constant_expr, constant_value)) {
+		return nullptr;
 	}
-	if (column_ref_expr->expression_class == ExpressionClass::BOUND_CAST &&
-	    constant_expr->expression_class == ExpressionClass::BOUND_CONSTANT) {
+	if (constant_value.IsNull() && !(expr.type == ExpressionType::COMPARE_NOT_DISTINCT_FROM ||
+	                                 expr.type == ExpressionType::COMPARE_DISTINCT_FROM)) {
+		// comparison with constant NULL, return NULL
+		return make_uniq<BoundConstantExpression>(Value(LogicalType::BOOLEAN));
+	}
+	if (column_ref_expr->expression_class == ExpressionClass::BOUND_CAST) {
 		//! Here we check if we can apply the expression on the constant side
-		auto cast_expression = (BoundCastExpression *)column_ref_expr;
-		if (!BoundCastExpression::CastIsInvertible(cast_expression->source_type, cast_expression->target_type)) {
+		//! We can do this if the cast itself is invertible and casting the constant is
+		//! invertible in practice.
+		auto &cast_expression = column_ref_expr->Cast<BoundCastExpression>();
+		auto target_type = cast_expression.source_type();
+		if (!BoundCastExpression::CastIsInvertible(target_type, cast_expression.return_type)) {
 			return nullptr;
 		}
-		auto bound_const_expr = (BoundConstantExpression *)constant_expr;
-		auto new_constant =
-		    bound_const_expr->value.TryCastAs(cast_expression->target_type.id, cast_expression->source_type.id);
-		if (new_constant) {
-			auto child_expression = move(cast_expression->child);
-			constant_expr->return_type = bound_const_expr->value.type;
-			//! We can cast, now we change our column_ref_expression from an operator cast to a column reference
-			if (column_ref_left) {
-				expr->left = move(child_expression);
-			} else {
-				expr->right = move(child_expression);
+
+		// Can we cast the constant at all?
+		string error_message;
+		Value cast_constant;
+		auto new_constant = constant_value.DefaultTryCastAs(target_type, cast_constant, &error_message, true);
+		if (!new_constant) {
+			return nullptr;
+		}
+
+		// Is the constant cast invertible?
+		if (!cast_constant.IsNull() &&
+		    !BoundCastExpression::CastIsInvertible(cast_expression.return_type, target_type)) {
+			// Is it actually invertible?
+			Value uncast_constant;
+			if (!cast_constant.DefaultTryCastAs(constant_value.type(), uncast_constant, &error_message, true) ||
+			    uncast_constant != constant_value) {
+				return nullptr;
 			}
+		}
+
+		//! We can cast, now we change our column_ref_expression from an operator cast to a column reference
+		auto child_expression = std::move(cast_expression.child);
+		auto new_constant_expr = make_uniq<BoundConstantExpression>(cast_constant);
+		if (column_ref_left) {
+			expr.left = std::move(child_expression);
+			expr.right = std::move(new_constant_expr);
+		} else {
+			expr.left = std::move(new_constant_expr);
+			expr.right = std::move(child_expression);
 		}
 	}
 	return nullptr;
 }
+
+} // namespace duckdb

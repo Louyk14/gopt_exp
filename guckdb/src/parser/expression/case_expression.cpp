@@ -2,50 +2,47 @@
 
 #include "duckdb/common/exception.hpp"
 
-using namespace duckdb;
-using namespace std;
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
+
+namespace duckdb {
 
 CaseExpression::CaseExpression() : ParsedExpression(ExpressionType::CASE_EXPR, ExpressionClass::CASE) {
 }
 
 string CaseExpression::ToString() const {
-	return "CASE WHEN (" + check->ToString() + ") THEN (" + result_if_true->ToString() + ") ELSE (" +
-	       result_if_false->ToString() + ")";
+	return ToString<CaseExpression, ParsedExpression>(*this);
 }
 
-bool CaseExpression::Equals(const CaseExpression *a, const CaseExpression *b) {
-	if (!a->check->Equals(b->check.get())) {
+bool CaseExpression::Equal(const CaseExpression &a, const CaseExpression &b) {
+	if (a.case_checks.size() != b.case_checks.size()) {
 		return false;
 	}
-	if (!a->result_if_true->Equals(b->result_if_true.get())) {
-		return false;
+	for (idx_t i = 0; i < a.case_checks.size(); i++) {
+		if (!a.case_checks[i].when_expr->Equals(*b.case_checks[i].when_expr)) {
+			return false;
+		}
+		if (!a.case_checks[i].then_expr->Equals(*b.case_checks[i].then_expr)) {
+			return false;
+		}
 	}
-	if (!a->result_if_false->Equals(b->result_if_false.get())) {
+	if (!a.else_expr->Equals(*b.else_expr)) {
 		return false;
 	}
 	return true;
 }
 
 unique_ptr<ParsedExpression> CaseExpression::Copy() const {
-	auto copy = make_unique<CaseExpression>();
+	auto copy = make_uniq<CaseExpression>();
 	copy->CopyProperties(*this);
-	copy->check = check->Copy();
-	copy->result_if_true = result_if_true->Copy();
-	copy->result_if_false = result_if_false->Copy();
-	return move(copy);
+	for (auto &check : case_checks) {
+		CaseCheck new_check;
+		new_check.when_expr = check.when_expr->Copy();
+		new_check.then_expr = check.then_expr->Copy();
+		copy->case_checks.push_back(std::move(new_check));
+	}
+	copy->else_expr = else_expr->Copy();
+	return std::move(copy);
 }
 
-void CaseExpression::Serialize(Serializer &serializer) {
-	ParsedExpression::Serialize(serializer);
-	check->Serialize(serializer);
-	result_if_true->Serialize(serializer);
-	result_if_false->Serialize(serializer);
-}
-
-unique_ptr<ParsedExpression> CaseExpression::Deserialize(ExpressionType type, Deserializer &source) {
-	auto expression = make_unique<CaseExpression>();
-	expression->check = ParsedExpression::Deserialize(source);
-	expression->result_if_true = ParsedExpression::Deserialize(source);
-	expression->result_if_false = ParsedExpression::Deserialize(source);
-	return move(expression);
-}
+} // namespace duckdb

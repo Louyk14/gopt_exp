@@ -9,9 +9,13 @@
 #pragma once
 
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/assert.hpp"
+#include "duckdb/common/exception.hpp"
 
 namespace duckdb {
 
+class ClientContext;
+class MetaTransaction;
 class Transaction;
 class TransactionManager;
 
@@ -19,14 +23,13 @@ class TransactionManager;
 //! current transaction
 class TransactionContext {
 public:
-	TransactionContext(TransactionManager &transaction_manager)
-	    : transaction_manager(transaction_manager), auto_commit(true), is_invalidated(false),
-	      current_transaction(nullptr) {
-	}
+	TransactionContext(ClientContext &context);
 	~TransactionContext();
 
-	Transaction &ActiveTransaction() {
-		assert(current_transaction);
+	MetaTransaction &ActiveTransaction() {
+		if (!current_transaction) {
+			throw InternalException("TransactionContext::ActiveTransaction called without active transaction");
+		}
 		return *current_transaction;
 	}
 
@@ -34,28 +37,25 @@ public:
 		return !!current_transaction;
 	}
 
-	void RecordQuery(string query);
 	void BeginTransaction();
 	void Commit();
 	void Rollback();
+	void ClearTransaction();
 
-	void SetAutoCommit(bool value) {
-		auto_commit = value;
-	}
+	void SetAutoCommit(bool value);
 	bool IsAutoCommit() {
 		return auto_commit;
 	}
 
-	void Invalidate() {
-		is_invalidated = true;
-	}
+	idx_t GetActiveQuery();
+	void ResetActiveQuery();
+	void SetActiveQuery(transaction_t query_number);
 
 private:
-	TransactionManager &transaction_manager;
+	ClientContext &context;
 	bool auto_commit;
-	bool is_invalidated;
 
-	Transaction *current_transaction;
+	unique_ptr<MetaTransaction> current_transaction;
 
 	TransactionContext(const TransactionContext &) = delete;
 };

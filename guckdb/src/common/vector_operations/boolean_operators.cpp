@@ -8,43 +8,45 @@
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 //===--------------------------------------------------------------------===//
 // AND/OR
 //===--------------------------------------------------------------------===//
-template <class OP> static void templated_boolean_nullmask(Vector &left, Vector &right, Vector &result, idx_t count) {
-	assert(left.type == TypeId::BOOL && right.type == TypeId::BOOL && result.type == TypeId::BOOL);
+template <class OP>
+static void TemplatedBooleanNullmask(Vector &left, Vector &right, Vector &result, idx_t count) {
+	D_ASSERT(left.GetType().id() == LogicalTypeId::BOOLEAN && right.GetType().id() == LogicalTypeId::BOOLEAN &&
+	         result.GetType().id() == LogicalTypeId::BOOLEAN);
 
-	if (left.vector_type == VectorType::CONSTANT_VECTOR && right.vector_type == VectorType::CONSTANT_VECTOR) {
+	if (left.GetVectorType() == VectorType::CONSTANT_VECTOR && right.GetVectorType() == VectorType::CONSTANT_VECTOR) {
 		// operation on two constants, result is constant vector
-		result.vector_type = VectorType::CONSTANT_VECTOR;
-		auto ldata = ConstantVector::GetData<bool>(left);
-		auto rdata = ConstantVector::GetData<bool>(right);
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		auto ldata = ConstantVector::GetData<uint8_t>(left);
+		auto rdata = ConstantVector::GetData<uint8_t>(right);
 		auto result_data = ConstantVector::GetData<bool>(result);
 
-		bool is_null =
-		    OP::Operation(*ldata, *rdata, ConstantVector::IsNull(left), ConstantVector::IsNull(right), *result_data);
+		bool is_null = OP::Operation(*ldata > 0, *rdata > 0, ConstantVector::IsNull(left),
+		                             ConstantVector::IsNull(right), *result_data);
 		ConstantVector::SetNull(result, is_null);
 	} else {
 		// perform generic loop
-		VectorData ldata, rdata;
-		left.Orrify(count, ldata);
-		right.Orrify(count, rdata);
+		UnifiedVectorFormat ldata, rdata;
+		left.ToUnifiedFormat(count, ldata);
+		right.ToUnifiedFormat(count, rdata);
 
-		result.vector_type = VectorType::FLAT_VECTOR;
-		auto left_data = (bool *)ldata.data;
-		auto right_data = (bool *)rdata.data;
+		result.SetVectorType(VectorType::FLAT_VECTOR);
+		auto left_data = UnifiedVectorFormat::GetData<uint8_t>(ldata); // we use uint8 to avoid load of gunk bools
+		auto right_data = UnifiedVectorFormat::GetData<uint8_t>(rdata);
 		auto result_data = FlatVector::GetData<bool>(result);
-		auto &result_mask = FlatVector::Nullmask(result);
-		if (ldata.nullmask->any() || rdata.nullmask->any()) {
+		auto &result_mask = FlatVector::Validity(result);
+		if (!ldata.validity.AllValid() || !rdata.validity.AllValid()) {
 			for (idx_t i = 0; i < count; i++) {
 				auto lidx = ldata.sel->get_index(i);
 				auto ridx = rdata.sel->get_index(i);
-				bool is_null = OP::Operation(left_data[lidx], right_data[ridx], (*ldata.nullmask)[lidx],
-				                             (*rdata.nullmask)[ridx], result_data[i]);
-				result_mask[i] = is_null;
+				bool is_null =
+				    OP::Operation(left_data[lidx] > 0, right_data[ridx] > 0, !ldata.validity.RowIsValid(lidx),
+				                  !rdata.validity.RowIsValid(ridx), result_data[i]);
+				result_mask.Set(i, !is_null);
 			}
 		} else {
 			for (idx_t i = 0; i < count; i++) {
@@ -104,7 +106,7 @@ struct TernaryAnd {
 };
 
 void VectorOperations::And(Vector &left, Vector &right, Vector &result, idx_t count) {
-	templated_boolean_nullmask<TernaryAnd>(left, right, result, count);
+	TemplatedBooleanNullmask<TernaryAnd>(left, right, result, count);
 }
 
 /*
@@ -157,16 +159,19 @@ struct TernaryOr {
 };
 
 void VectorOperations::Or(Vector &left, Vector &right, Vector &result, idx_t count) {
-	templated_boolean_nullmask<TernaryOr>(left, right, result, count);
+	TemplatedBooleanNullmask<TernaryOr>(left, right, result, count);
 }
 
 struct NotOperator {
-	template <class TA, class TR> static inline TR Operation(TA left) {
+	template <class TA, class TR>
+	static inline TR Operation(TA left) {
 		return !left;
 	}
 };
 
 void VectorOperations::Not(Vector &input, Vector &result, idx_t count) {
-	assert(input.type == TypeId::BOOL && result.type == TypeId::BOOL);
+	D_ASSERT(input.GetType() == LogicalType::BOOLEAN && result.GetType() == LogicalType::BOOLEAN);
 	UnaryExecutor::Execute<bool, bool, NotOperator>(input, result, count);
 }
+
+} // namespace duckdb

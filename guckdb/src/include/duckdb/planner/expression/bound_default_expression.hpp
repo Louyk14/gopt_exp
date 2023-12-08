@@ -14,11 +14,12 @@ namespace duckdb {
 
 class BoundDefaultExpression : public Expression {
 public:
-	BoundDefaultExpression(TypeId type = TypeId::INVALID, SQLType sql_type = SQLType())
-	    : Expression(ExpressionType::VALUE_DEFAULT, ExpressionClass::BOUND_DEFAULT, type), sql_type(sql_type) {
-	}
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_DEFAULT;
 
-	SQLType sql_type;
+public:
+	explicit BoundDefaultExpression(LogicalType type = LogicalType())
+	    : Expression(ExpressionType::VALUE_DEFAULT, ExpressionClass::BOUND_DEFAULT, type) {
+	}
 
 public:
 	bool IsScalar() const override {
@@ -33,7 +34,10 @@ public:
 	}
 
 	unique_ptr<Expression> Copy() override {
-		return make_unique<BoundDefaultExpression>(return_type, sql_type);
+		return make_uniq<BoundDefaultExpression>(return_type);
 	}
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 };
 } // namespace duckdb

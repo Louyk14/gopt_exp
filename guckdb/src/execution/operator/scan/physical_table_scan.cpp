@@ -1,499 +1,299 @@
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/transaction/transaction.hpp"
+#include "duckdb/function/table/table_scan.hpp"
+#include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 
-#include <iostream>
 #include <utility>
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-class PhysicalTableScanOperatorState : public PhysicalOperatorState {
+PhysicalTableScan::PhysicalTableScan(vector<LogicalType> types, TableFunction function_p,
+                                     unique_ptr<FunctionData> bind_data_p, vector<LogicalType> returned_types_p,
+                                     vector<column_t> column_ids_p, vector<idx_t> projection_ids_p,
+                                     vector<string> names_p, unique_ptr<TableFilterSet> table_filters_p,
+                                     idx_t estimated_cardinality, ExtraOperatorInfo extra_info)
+    : PhysicalOperator(PhysicalOperatorType::TABLE_SCAN, std::move(types), estimated_cardinality),
+      function(std::move(function_p)), bind_data(std::move(bind_data_p)), returned_types(std::move(returned_types_p)),
+      column_ids(std::move(column_ids_p)), projection_ids(std::move(projection_ids_p)), names(std::move(names_p)),
+      table_filters(std::move(table_filters_p)), extra_info(extra_info) {
+}
+
+class TableScanGlobalSourceState : public GlobalSourceState {
 public:
-	PhysicalTableScanOperatorState(Expression &expr)
-	    : PhysicalOperatorState(nullptr), initialized(false), executor(expr) {
+	TableScanGlobalSourceState(ClientContext &context, const PhysicalTableScan &op) {
+		if (op.function.init_global) {
+			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, op.table_filters.get());
+			global_state = op.function.init_global(context, input);
+			if (global_state) {
+				max_threads = global_state->MaxThreads();
+			}
+		} else {
+			max_threads = 1;
+		}
 	}
-	PhysicalTableScanOperatorState() : PhysicalOperatorState(nullptr), initialized(false) {
+
+	idx_t max_threads = 0;
+	unique_ptr<GlobalTableFunctionState> global_state;
+
+	idx_t MaxThreads() override {
+		return max_threads;
 	}
-	//! Whether or not the scan has been initialized
-	bool initialized;
-	//! The current position in the scan
-	TableScanState scan_offset;
-	//! Execute filters inside the table
-	ExpressionExecutor executor;
-	TableIndexScanState index_state;
 };
 
-PhysicalTableScan::PhysicalTableScan(LogicalOperator &op, TableCatalogEntry &tableref, idx_t table_index,
-                                     DataTable &table, vector<column_t> column_ids,
-                                     vector<unique_ptr<Expression>> filter,
-                                     unordered_map<idx_t, vector<TableFilter>> table_filters)
-    : PhysicalOperator(PhysicalOperatorType::SEQ_SCAN, op.types), tableref(tableref), table_index(table_index),
-      table(table), column_ids(move(column_ids)), table_filters(move(table_filters)), rows_filter(nullptr),
-      rows_count(-1) {
-	if (filter.size() > 1) {
-		//! create a big AND out of the expressions
-		auto conjunction = make_unique<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
-		for (auto &expr : filter) {
-			conjunction->children.push_back(move(expr));
+class TableScanLocalSourceState : public LocalSourceState {
+public:
+	TableScanLocalSourceState(ExecutionContext &context, TableScanGlobalSourceState &gstate,
+	                          const PhysicalTableScan &op) {
+		if (op.function.init_local) {
+			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, op.table_filters.get());
+			local_state = op.function.init_local(context, input, gstate.global_state.get());
 		}
-		expression = move(conjunction);
-	} else if (filter.size() == 1) {
-		expression = move(filter[0]);
 	}
+
+	unique_ptr<LocalTableFunctionState> local_state;
+};
+
+unique_ptr<LocalSourceState> PhysicalTableScan::GetLocalSourceState(ExecutionContext &context,
+                                                                    GlobalSourceState &gstate) const {
+	return make_uniq<TableScanLocalSourceState>(context, gstate.Cast<TableScanGlobalSourceState>(), *this);
 }
 
-bool PhysicalTableScan::PushdownZoneFilter(idx_t table_index_, const shared_ptr<bitmask_vector> &row_bitmask_,
-                                           const shared_ptr<bitmask_vector> &zone_bitmask_) {
-	if (this->table_index == table_index_) {
-		if (this->row_bitmask) {
-			auto &result_row_bitmask = *row_bitmask;
-			auto &input_row_bitmask = *row_bitmask_;
-			auto &result_zone_bitmask = *zone_bitmask;
-			auto &input_zone_bitmask = *zone_bitmask_;
-			for (idx_t i = 0; i < zone_bitmask_->size(); i++) {
-				result_zone_bitmask[i] = result_zone_bitmask[i] & input_zone_bitmask[i];
-			}
-			auto zone_filter_index = 0;
-			for (idx_t i = 0; i < result_zone_bitmask.size(); i++) {
-				auto zone_count = result_zone_bitmask[i] * STANDARD_VECTOR_SIZE;
-				for (idx_t j = 0; j < zone_count; j++) {
-					auto current_index = i * STANDARD_VECTOR_SIZE + j;
-					result_row_bitmask[current_index] =
-					    result_row_bitmask[current_index] & input_row_bitmask[current_index];
+unique_ptr<GlobalSourceState> PhysicalTableScan::GetGlobalSourceState(ClientContext &context) const {
+	return make_uniq<TableScanGlobalSourceState>(context, *this);
+}
+
+SourceResultType PhysicalTableScan::GetData(ExecutionContext &context, DataChunk &chunk,
+                                            OperatorSourceInput &input) const {
+	D_ASSERT(!column_ids.empty());
+	auto &gstate = input.global_state.Cast<TableScanGlobalSourceState>();
+	auto &state = input.local_state.Cast<TableScanLocalSourceState>();
+
+	TableFunctionInput data(bind_data.get(), state.local_state.get(), gstate.global_state.get());
+	function.function(context.client, data, chunk);
+
+	return chunk.size() == 0 ? SourceResultType::FINISHED : SourceResultType::HAVE_MORE_OUTPUT;
+}
+
+double PhysicalTableScan::GetProgress(ClientContext &context, GlobalSourceState &gstate_p) const {
+	auto &gstate = gstate_p.Cast<TableScanGlobalSourceState>();
+	if (function.table_scan_progress) {
+		return function.table_scan_progress(context, bind_data.get(), gstate.global_state.get());
+	}
+	// if table_scan_progress is not implemented we don't support this function yet in the progress bar
+	return -1;
+}
+
+idx_t PhysicalTableScan::GetBatchIndex(ExecutionContext &context, DataChunk &chunk, GlobalSourceState &gstate_p,
+                                       LocalSourceState &lstate) const {
+	D_ASSERT(SupportsBatchIndex());
+	D_ASSERT(function.get_batch_index);
+	auto &gstate = gstate_p.Cast<TableScanGlobalSourceState>();
+	auto &state = lstate.Cast<TableScanLocalSourceState>();
+	return function.get_batch_index(context.client, bind_data.get(), state.local_state.get(),
+	                                gstate.global_state.get());
+}
+
+string PhysicalTableScan::GetName() const {
+	return StringUtil::Upper(function.name + " " + function.extra_info);
+}
+
+string PhysicalTableScan::ParamsToString() const {
+	string result;
+	if (function.to_string) {
+		result = function.to_string(bind_data.get());
+		result += "\n[INFOSEPARATOR]\n";
+	}
+	if (function.projection_pushdown) {
+		if (function.filter_prune) {
+			for (idx_t i = 0; i < projection_ids.size(); i++) {
+				const auto &column_id = column_ids[projection_ids[i]];
+				if (column_id < names.size()) {
+					if (i > 0) {
+						result += "\n";
+					}
+					result += names[column_id];
 				}
-				zone_filter_index += STANDARD_VECTOR_SIZE;
 			}
 		} else {
-			this->row_bitmask = row_bitmask_;
-			this->zone_bitmask = zone_bitmask_;
-		}
-		return true;
-	}
-	return false;
-}
-
-bool PhysicalTableScan::PushdownRowsFilter(idx_t table_index_, const shared_ptr<rows_vector> &rows_filter_,
-                                           idx_t count) {
-	if (this->table_index == table_index_) {
-		if (this->rows_count <= 0 || (row_t)count < this->rows_count) {
-			this->rows_filter = rows_filter_;
-			this->rows_count = count;
-		}
-		return true;
-	}
-	return false;
-}
-
-void PhysicalTableScan::PerformSeqScan(DataChunk &chunk, PhysicalOperatorState *state_, Transaction &transaction) {
-	auto state = reinterpret_cast<PhysicalTableScanOperatorState *>(state_);
-
-	if (!state->initialized) {
-		if (rows_count != -1) {
-			table.InitializeScan(state->scan_offset, column_ids, rows_filter, rows_count, &table_filters);
-			state->initialized = true;
-		} else if (row_bitmask) {
-			table.InitializeScan(state->scan_offset, column_ids, row_bitmask, zone_bitmask, &table_filters);
-			state->initialized = true;
-		} else {
-			table.InitializeScan(transaction, state->scan_offset, column_ids, &table_filters);
-			state->initialized = true;
-		}
-	}
-	table.Scan(transaction, chunk, state->scan_offset, table_filters);
-}
-
-template <class T> static void Lookup(ColumnData &column, row_t *row_ids, Vector &result, idx_t count) {
-	auto result_data = FlatVector::GetData(result);
-	auto type_size = sizeof(T);
-	idx_t s_size = column.data.nodes[0].node->count;
-	for (idx_t i = 0; i < count; i++) {
-		row_t row_id = row_ids[i];
-		idx_t s_index = row_id / s_size;
-		idx_t s_offset = row_id % s_size;
-		idx_t vector_index = s_offset / STANDARD_VECTOR_SIZE;
-		idx_t id_in_vector = s_offset - vector_index * STANDARD_VECTOR_SIZE;
-		// get segment buffer
-		auto transient_segment = (TransientSegment *)column.data.nodes[s_index].node;
-		auto numeric_segment = (NumericSegment *)transient_segment->data.get();
-		assert(vector_index < numeric_segment->max_vector_count);
-		auto block_entry = transient_segment->manager.blocks.find(numeric_segment->block_id);
-		if (block_entry == transient_segment->manager.blocks.end()) {
-			continue;
-		}
-		auto s_base = block_entry->second->buffer->buffer;
-		auto s_data =
-		    s_base + (vector_index * (sizeof(nullmask_t) + type_size * STANDARD_VECTOR_SIZE) + sizeof(nullmask_t));
-		memcpy(result_data + (i * type_size), s_data + (id_in_vector * type_size), type_size);
-	}
-}
-
-void PhysicalTableScan::PerformLookup(DataChunk &chunk, PhysicalOperatorState *state_, SelectionVector *sel,
-                                      Vector *rid_vector, DataChunk *rai_chunk, Transaction &transaction) {
-	auto state = reinterpret_cast<PhysicalTableScanOperatorState *>(state_);
-	auto fetch_count = rai_chunk->size();
-	if (fetch_count == 0) {
-		return;
-	}
-	// perform lookups
-	auto row_ids = FlatVector::GetData<row_t>(*rid_vector);
-	vector<column_t> rai_columns;
-	chunk.SetCardinality(fetch_count);
-	for (idx_t col_idx = 0; col_idx < column_ids.size(); col_idx++) {
-		auto col = column_ids[col_idx];
-		if (col == COLUMN_IDENTIFIER_ROW_ID) {
-			chunk.data[col_idx].Reference(*rid_vector);
-		} else {
-			auto column = table.GetColumn(col);
-			switch (column->type) {
-			case TypeId::INT8: {
-				Lookup<int8_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::UINT8: {
-				Lookup<uint8_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::INT16: {
-				Lookup<int16_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::HASH:
-			case TypeId::UINT16: {
-				Lookup<uint16_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::INT32: {
-				Lookup<int32_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::UINT32: {
-				Lookup<uint32_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::TIMESTAMP:
-			case TypeId::INT64: {
-				Lookup<int64_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::UINT64: {
-				Lookup<uint64_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::FLOAT: {
-				Lookup<float_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::DOUBLE: {
-				Lookup<double_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			case TypeId::POINTER: {
-				Lookup<uintptr_t>(*column.get(), row_ids, chunk.data[col_idx], fetch_count);
-				break;
-			}
-			default: {
-				table.Fetch(transaction, chunk, column_ids, *rid_vector, fetch_count, state->index_state);
-			}
+			for (idx_t i = 0; i < column_ids.size(); i++) {
+				const auto &column_id = column_ids[i];
+				if (column_id < names.size()) {
+					if (i > 0) {
+						result += "\n";
+					}
+					result += names[column_id];
+				}
 			}
 		}
 	}
-	// filter
-	SelectionVector filter_sel(fetch_count);
-	auto result_count = fetch_count;
-	if (table_filters.size() > 0) {
-		result_count = state->executor.SelectExpression(chunk, filter_sel);
-	}
-#if ENABLE_PROFILING
-	lookup_size += result_count;
-#endif
-	if (result_count == fetch_count) {
-		// nothing was filtered: skip adding any selection vectors
-		return;
-	}
-	// slice
-	chunk.Slice(filter_sel, result_count);
-	auto sel_data = sel->Slice(filter_sel, result_count);
-	sel->Initialize(move(sel_data));
-}
-
-void PhysicalTableScan::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-                                         SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	if (column_ids.empty()) {
-		return;
-	}
-	auto &transaction = context.ActiveTransaction();
-	if (rid_vector == nullptr) {
-#if ENABLE_PROFILING
-		seq_scan = true;
-#endif
-		PerformSeqScan(chunk, state_, transaction);
-	} else {
-#if ENABLE_PROFILING
-		seq_scan = false;
-#endif
-		PerformLookup(chunk, state_, sel, rid_vector, rai_chunk, transaction);
-	}
-}
-
-string PhysicalTableScan::ExtraRenderInformation() const {
-	string result = "";
-	if (expression) {
-		result += tableref.name + " " + expression->ToString();
-	} else {
-		result += tableref.name;
-	}
-	result += "(" + to_string(table_index) + ")";
-	result += "[";
-	for (auto &id : column_ids) {
-		if (id == COLUMN_IDENTIFIER_ROW_ID) {
-			result += "rowid,";
-		} else {
-			result += tableref.columns[id].name + ",";
+	if (function.filter_pushdown && table_filters) {
+		result += "\n[INFOSEPARATOR]\n";
+		result += "Filters: ";
+		for (auto &f : table_filters->filters) {
+			auto &column_index = f.first;
+			auto &filter = f.second;
+			if (column_index < names.size()) {
+				result += filter->ToString(names[column_ids[column_index]]);
+				result += "\n";
+			}
 		}
 	}
-	result = result.substr(0, result.size() - 1);
-	result += "]";
-//	if (seq_scan) {
-//		if (rows_count >= 0) {
-//			result += "\nROWS_FILTER(" + to_string(rows_count) + "/" + to_string(table.info->cardinality) + ")";
-//		} else if (row_bitmask) {
-//			result += "\nROWS_BITMASK(" + to_string(row_bitmask->count()) + "/" + to_string(row_bitmask->size()) + ")";
-//			result +=
-//			    "\nZONE_BITMASK(" + to_string(zone_bitmask->count()) + "/" + to_string(zone_bitmask->size()) + ")";
-//		}
-//	} else {
-//		result += "\nLOOKUP(" + to_string(lookup_size) + "/" + to_string(table.info->cardinality) + ")";
-//	}
-
+	if (!extra_info.file_filters.empty()) {
+		result += "\n[INFOSEPARATOR]\n";
+		result += "File Filters: " + extra_info.file_filters;
+	}
+	result += "\n[INFOSEPARATOR]\n";
+	result += StringUtil::Format("EC: %llu", estimated_cardinality);
 	return result;
 }
 
-unique_ptr<PhysicalOperatorState> PhysicalTableScan::GetOperatorState() {
-	if (expression) {
-		return make_unique<PhysicalTableScanOperatorState>(*expression);
-	} else {
-		return make_unique<PhysicalTableScanOperatorState>();
+bool PhysicalTableScan::Equals(const PhysicalOperator &other_p) const {
+	if (type != other_p.type) {
+		return false;
 	}
+	auto &other = other_p.Cast<PhysicalTableScan>();
+	if (function.function != other.function.function) {
+		return false;
+	}
+	if (column_ids != other.column_ids) {
+		return false;
+	}
+	if (!FunctionData::Equals(bind_data.get(), other.bind_data.get())) {
+		return false;
+	}
+	return true;
 }
 
-string PhysicalTableScan::GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, duckdb::idx_t depth) const {
-	string read_str = AssignBlank(depth) + "\"read\": {\n";
+    string PhysicalTableScan::GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, duckdb::idx_t depth) const {
+        return "";
+    }
 
-	string common_str = AssignBlank(++depth) + "\"common\": {\n";
-	string emit_str = AssignBlank(++depth) + "\"emit\": {\n";
-	string output_mapping_str = AssignBlank(++depth) + "\"outputMapping\": [\n";
-	string output_mapping_types = AssignBlank(depth) + "\"outputTypes\": [\n";
+    substrait::Rel* PhysicalTableScan::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
+        substrait::Rel* table_scan_rel = new substrait::Rel();
+        substrait::ReadRel* read = new substrait::ReadRel();
+        substrait::RelCommon* common = new substrait::RelCommon();
+        substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
 
-	string select_list_str = "";
-	string select_list_types = "";
+        for (int i = 0; i < column_ids.size(); ++i) {
+            emit->add_output_mapping(column_ids[i]);
+            emit->add_output_types(TypeIdToString(returned_types[i].InternalType()));
+        }
 
-	++depth;
+        common->set_allocated_emit(emit);
 
-	for (int i = 0; i < column_ids.size(); ++i) {
-		select_list_str += AssignBlank(depth) + to_string(column_ids[i]);
-		if (column_ids[i] == COLUMN_IDENTIFIER_ROW_ID) {
-			select_list_types += AssignBlank(depth) + "\"" + TypeIdToString(TypeId::INT64) + "\"";
-		}
-		else {
-			select_list_types += AssignBlank(depth) + "\"" + TypeIdToString(table.GetColumn(column_ids[i])->type) + "\"";
-		}
+        substrait::ReadRel_NamedTable* named_table = new substrait::ReadRel_NamedTable();
+        TableScanBindData* table_bind_data = (TableScanBindData*) bind_data.get();
+        string table_name = table_bind_data->table.name;
+        std::transform(table_name.begin(), table_name.end(), table_name.begin(),
+                                                      [](unsigned char c){ return std::tolower(c); });
+        // named_table->add_names(table_bind_data->table->table);
+        named_table->add_names(table_name);
 
-		if (i != column_ids.size() - 1) {
-			select_list_str += ",\n";
-			select_list_types += ",\n";
-		}
-		else {
-			select_list_str += "\n";
-			select_list_types += "\n";
-		}
-	}
-	select_list_str += AssignBlank(--depth) + "]";
-	select_list_types += AssignBlank(depth) + "]";
-	output_mapping_str += select_list_str + ",\n";
-	output_mapping_types += select_list_types + "\n";
-	emit_str += output_mapping_str + output_mapping_types + AssignBlank(--depth) + "}\n";
-	common_str += emit_str + AssignBlank(--depth) + "}";
+        substrait::Expression* filter = new substrait::Expression();
+        if (table_filters != NULL && !table_filters->filters.empty()) {
+            for (const auto& pair : table_filters->filters) {
+                int read_index = pair.first;
+                int column_index = column_ids[read_index];
+                substrait::Expression_ScalarFunction *scalar_function = new substrait::Expression_ScalarFunction();
 
-	string named_table_str =  AssignBlank(depth) + "\"namedTable\": {\n";
-	string table_names_str = AssignBlank(++depth) + "\"names\": [\n";
-	table_names_str += AssignBlank(++depth) + "\"" + table.info->table + "\"\n" + AssignBlank(--depth) + "]\n";
-	named_table_str += table_names_str + AssignBlank(--depth) + "}";
+                if (pair.second->filter_type == TableFilterType::CONJUNCTION_AND) {
+                    ConjunctionAndFilter* cur_filter = (ConjunctionAndFilter*) pair.second.get();
+                    for (int i = 0; i < cur_filter->child_filters.size(); ++i) {
+                        ConstantFilter* cfilter = (ConstantFilter*) cur_filter->child_filters[i].get();
 
-	string filter_str = "";
-	if (!table_filters.empty()) {
-		filter_str = AssignBlank(depth) + "\"filter\": {\n";
+                        switch (cfilter->comparison_type) {
+                            case ExpressionType::COMPARE_EQUAL:
+                                scalar_function->set_function_reference(0);
+                                break;
+                            case ExpressionType::COMPARE_GREATERTHAN:
+                                scalar_function->set_function_reference(1);
+                                break;
+                            default:
+                                scalar_function->set_function_reference(-1);
+                                break;
+                        }
 
-		for (const auto& pair : table_filters) {
-			for (int i = 0; i < pair.second.size(); ++i) {
-				string scalar_function_str = AssignBlank(++depth) + "\"scalarFunction\": {\n";
-				string function_reference_str = AssignBlank(++depth) + "\"functionReference\": ";
+                        substrait::Type *output_type = new substrait::Type();
+                        substrait::Type_Boolean *boolean = new substrait::Type_Boolean();
+                        boolean->set_nullability(substrait::Type_Nullability_NULLABILITY_REQUIRED);
+                        output_type->set_allocated_bool_(boolean);
 
-				ExpressionType type = pair.second[i].comparison_type;
-				if (func_map.find(type) != func_map.end()) {
-					function_reference_str += to_string(func_map[type]) + ",\n";
-				}
-				else {
-					func_map[type] = func_num;
-					function_reference_str += to_string(func_num++) + ",\n";
-				}
+                        substrait::FunctionArgument *arg1 = new substrait::FunctionArgument();
+                        substrait::Expression *value1 = new substrait::Expression();
+                        substrait::Expression_FieldReference *selection1 = new substrait::Expression_FieldReference();
+                        substrait::Expression_ReferenceSegment *direct_reference1 = new substrait::Expression_ReferenceSegment();
+                        substrait::Expression_ReferenceSegment_StructField *struct_field1 = new substrait::Expression_ReferenceSegment_StructField();
 
-				string outputType = AssignBlank(depth) + "\"outputType\": {\n";
-				outputType += AssignBlank(++depth) + "\"bool\": {\n";
-				outputType += AssignBlank(++depth) + "\"nullability\": \"NULLABILITY_REQUIRED\"\n";
-				outputType += AssignBlank(--depth) + "}\n";
-				outputType += AssignBlank(--depth) + "},\n";
+                        struct_field1->set_field(pair.first);
+                        direct_reference1->set_allocated_struct_field(struct_field1);
+                        selection1->set_allocated_direct_reference(direct_reference1);
+                        value1->set_allocated_selection(selection1);
+                        arg1->set_allocated_value(value1);
 
-				string arguments_str = AssignBlank(depth) + "\"arguments\": [\n";
-				string arg1 = AssignBlank(++depth) + "{\n";
-				arg1 += AssignBlank(++depth) + "\"value\": {\n";
-				arg1 += AssignBlank(++depth) + "\"selection\": {\n";
-				arg1 += AssignBlank(++depth) + "\"directReference\": {\n";
-				arg1 += AssignBlank(++depth) + "\"structField\": {\n";
-				arg1 += AssignBlank(++depth) + "\"field\": " + to_string(pair.first) + "\n";
-				arg1 += AssignBlank(--depth) + "}\n";
-				arg1 += AssignBlank(--depth) + "},\n";
-				arg1 += AssignBlank(depth) + "\"rootReference\": {}\n";
-				arg1 += AssignBlank(--depth) + "}\n";
-				arg1 += AssignBlank(--depth) + "}\n";
-				arg1 += AssignBlank(--depth) + "},\n";
+                        substrait::FunctionArgument *arg2 = new substrait::FunctionArgument();
+                        substrait::Expression *value2 = new substrait::Expression();
+                        substrait::Expression_Literal *literal = new substrait::Expression_Literal();
 
-				string arg2 = AssignBlank(depth) + "{\n";
-				arg2 += AssignBlank(++depth) + "\"value\": {\n";
-				arg2 += AssignBlank(++depth) + "\"literal\": {\n";
-				arg2 += AssignBlank(++depth) + "\"" + TypeIdToString(pair.second[i].constant.type) + "\": ";
+                        if (cfilter->constant.type().InternalType() == PhysicalType::VARCHAR) {
+                            string *literal_str = new string(cfilter->constant.GetValue<string>());
+                            literal->set_allocated_string(literal_str);
+                        }
 
-				if (pair.second[i].constant.type == TypeId::VARCHAR) {
-					arg2 += "\"" + pair.second[i].constant.str_value + "\"\n";
-				}
+                        value2->set_allocated_literal(literal);
+                        arg2->set_allocated_value(value2);
 
-				arg2 += AssignBlank(--depth) + "}\n";
-				arg2 += AssignBlank(--depth) + "}\n";
-				arg2 += AssignBlank(--depth) + "}\n";
+                        scalar_function->set_allocated_output_type(output_type);
+                        *scalar_function->add_arguments() = *arg1;
+                        *scalar_function->add_arguments() = *arg2;
+                        filter->set_allocated_scalar_function(scalar_function);
 
-				arguments_str += arg1 + arg2 + AssignBlank(--depth) + "]\n";
+                        delete arg1;
+                        delete arg2;
 
-				scalar_function_str += function_reference_str + outputType + arguments_str + AssignBlank(--depth) + "}\n";
-				filter_str += scalar_function_str;
-				break;
-			}
-		}
-
-		filter_str += AssignBlank(--depth) + "}\n";
-	}
-
-	if (filter_str.empty()) {
-		read_str += common_str + ",\n" + named_table_str + "\n" + AssignBlank(--depth) + "}\n";
-	}
-	else {
-		read_str += common_str + ",\n" + named_table_str + ",\n" + filter_str + AssignBlank(--depth) + "}\n";
-	}
-
-	return read_str;
-}
-
-substrait::Rel* PhysicalTableScan::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
-	substrait::Rel* table_scan_rel = new substrait::Rel();
-	substrait::ReadRel* read = new substrait::ReadRel();
-	substrait::RelCommon* common = new substrait::RelCommon();
-	substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
-
-	for (int i = 0; i < column_ids.size(); ++i) {
-		emit->add_output_mapping(column_ids[i]);
-		if (column_ids[i] == COLUMN_IDENTIFIER_ROW_ID) {
-			emit->add_output_types(TypeIdToString(TypeId::INT64));
-		}
-		else {
-			emit->add_output_types(TypeIdToString(table.GetColumn(column_ids[i])->type));
-		}
-	}
-
-	common->set_allocated_emit(emit);
-
-	substrait::ReadRel_NamedTable* named_table = new substrait::ReadRel_NamedTable();
-	named_table->add_names(table.info->table);
-
-    substrait::Expression* filter = new substrait::Expression();
-    substrait::Expression_Nested* nested_filter = new substrait::Expression_Nested();
-    filter->set_allocated_nested(nested_filter);
-
-    substrait::Expression_Nested_List* listed_filter = new substrait::Expression_Nested_List();
-    nested_filter->set_allocated_list(listed_filter);
-
-	if (!table_filters.empty()) {
-		for (const auto& pair : table_filters) {
-			for (int i = 0; i < pair.second.size(); ++i) {
-                substrait::Expression* comp_expr = new substrait::Expression();
-				substrait::Expression_ScalarFunction* scalar_function = new substrait::Expression_ScalarFunction();
-
-                int comp_type = static_cast<int>(pair.second[i].comparison_type);
-                scalar_function->set_function_reference(comp_type);
-
-				substrait::Type* output_type = new substrait::Type();
-				substrait::Type_Boolean* boolean = new substrait::Type_Boolean();
-				boolean->set_nullability(substrait::Type_Nullability_NULLABILITY_REQUIRED);
-				output_type->set_allocated_bool_(boolean);
-
-				substrait::FunctionArgument* arg1 = new substrait::FunctionArgument();
-				substrait::Expression* value1 = new substrait::Expression();
-				substrait::Expression_FieldReference* selection1 = new substrait::Expression_FieldReference();
-				substrait::Expression_ReferenceSegment* direct_reference1 = new substrait::Expression_ReferenceSegment();
-				substrait::Expression_ReferenceSegment_StructField* struct_field1 = new substrait::Expression_ReferenceSegment_StructField();
-
-				struct_field1->set_field(pair.first);
-				direct_reference1->set_allocated_struct_field(struct_field1);
-				selection1->set_allocated_direct_reference(direct_reference1);
-				value1->set_allocated_selection(selection1);
-				arg1->set_allocated_value(value1);
-
-				substrait::FunctionArgument* arg2 = new substrait::FunctionArgument();
-				substrait::Expression* value2 = new substrait::Expression();
-				substrait::Expression_Literal* literal = new substrait::Expression_Literal();
-
-				if (pair.second[i].constant.type == TypeId::VARCHAR) {
-					string* literal_str = new string(pair.second[i].constant.str_value);
-					literal->set_allocated_string(literal_str);
-				}
-                else if (pair.second[i].constant.type == TypeId::INT64) {
-                    literal->set_i64(pair.second[i].constant.value_.bigint);
+                        break;
+                    }
                 }
-                else if (pair.second[i].constant.type == TypeId::INT32) {
-                    literal->set_i32(pair.second[i].constant.value_.integer);
-                }
-                else if (pair.second[i].constant.type == TypeId::INT16) {
-                    literal->set_i16(pair.second[i].constant.value_.smallint);
-                }
-                else if (pair.second[i].constant.type == TypeId::INT8) {
-                    literal->set_i8(pair.second[i].constant.value_.tinyint);
-                }
-                else if (pair.second[i].constant.type == TypeId::BOOL) {
-                    literal->set_boolean(pair.second[i].constant.value_.boolean);
-                }
+            }
+        }
 
-				value2->set_allocated_literal(literal);
-				arg2->set_allocated_value(value2);
+        read->set_allocated_common(common);
+        read->set_allocated_named_table(named_table);
+        read->set_allocated_filter(filter);
 
-				scalar_function->set_allocated_output_type(output_type);
-				*scalar_function->add_arguments() = *arg1;
-				*scalar_function->add_arguments() = *arg2;
-				comp_expr->set_allocated_scalar_function(scalar_function);
-                *listed_filter->add_values() = *comp_expr;
+        table_scan_rel->set_allocated_read(read);
 
-                delete comp_expr;
-				delete arg1;
-				delete arg2;
-				// break;
-			}
-		}
-	}
+        if (!projection_ids.empty() && projection_ids.size() != column_ids.size()) {
+            substrait::Rel *project_rel = new substrait::Rel();
+            substrait::ProjectRel *project = new substrait::ProjectRel();
+            substrait::RelCommon *project_common = new substrait::RelCommon();
+            substrait::RelCommon_Emit *project_emit = new substrait::RelCommon_Emit();
 
-	read->set_allocated_common(common);
-	read->set_allocated_named_table(named_table);
-	read->set_allocated_filter(filter);
+            TableScanBindData* table_bind_data = (TableScanBindData*) bind_data.get();
 
-	table_scan_rel->set_allocated_read(read);
+            for (int i = 0; i < projection_ids.size(); ++i) {
+                project_emit->add_output_mapping(projection_ids[i]);
+                int col_id = column_ids[projection_ids[i]];
+                LogicalIndex idx(col_id);
+                const ColumnDefinition& column_definition = table_bind_data->table.GetColumn(idx);
+                project_emit->add_output_names(column_definition.GetName());
+                project_emit->add_output_types(TypeIdToString(column_definition.GetType().InternalType()));
+            }
 
-	return table_scan_rel;
-}
+            project_common->set_allocated_emit(project_emit);
+            project->set_allocated_common(project_common);
+
+            project->set_allocated_input(table_scan_rel);
+
+            project_rel->set_allocated_project(project);
+            return project_rel;
+        }
+
+        return table_scan_rel;
+    }
+
+} // namespace duckdb

@@ -2,13 +2,14 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_unnest.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreatePlan(LogicalUnnest &op) {
-	assert(op.children.size() == 1);
+	D_ASSERT(op.children.size() == 1);
 	auto plan = CreatePlan(*op.children[0]);
-	auto unnest = make_unique<PhysicalUnnest>(op, move(op.expressions));
-	unnest->children.push_back(move(plan));
-	return move(unnest);
+	auto unnest = make_uniq<PhysicalUnnest>(op.types, std::move(op.expressions), op.estimated_cardinality);
+	unnest->children.push_back(std::move(plan));
+	return std::move(unnest);
 }
+
+} // namespace duckdb

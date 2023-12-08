@@ -10,24 +10,38 @@
 
 #include "duckdb/common/types/chunk_collection.hpp"
 #include "duckdb/execution/physical_operator.hpp"
+#include "duckdb/planner/expression.hpp"
 
 namespace duckdb {
 
 //! The PhysicalExpressionScan scans a set of expressions
 class PhysicalExpressionScan : public PhysicalOperator {
 public:
-	PhysicalExpressionScan(vector<TypeId> types, vector<vector<unique_ptr<Expression>>> expressions)
-	    : PhysicalOperator(PhysicalOperatorType::EXPRESSION_SCAN, types), expressions(move(expressions)) {
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXPRESSION_SCAN;
+
+public:
+	PhysicalExpressionScan(vector<LogicalType> types, vector<vector<unique_ptr<Expression>>> expressions,
+	                       idx_t estimated_cardinality)
+	    : PhysicalOperator(PhysicalOperatorType::EXPRESSION_SCAN, std::move(types), estimated_cardinality),
+	      expressions(std::move(expressions)) {
 	}
 
 	//! The set of expressions to scan
 	vector<vector<unique_ptr<Expression>>> expressions;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
-	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
+	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
+	OperatorResultType Execute(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+	                           GlobalOperatorState &gstate, OperatorState &state) const override;
+
+	bool ParallelOperator() const override {
+		return true;
+	}
+
+public:
+	bool IsFoldable() const;
+	void EvaluateExpression(ClientContext &context, idx_t expression_idx, DataChunk *child_chunk,
+	                        DataChunk &result) const;
 };
 
 } // namespace duckdb

@@ -3,39 +3,48 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_subquery_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/common/string_util.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 class BoundSubqueryNode : public QueryNode {
 public:
-	BoundSubqueryNode(unique_ptr<Binder> subquery_binder, unique_ptr<BoundQueryNode> bound_node,
-	                  unique_ptr<QueryNode> subquery)
-	    : QueryNode(QueryNodeType::BOUND_SUBQUERY_NODE), subquery_binder(move(subquery_binder)),
-	      bound_node(move(bound_node)), subquery(move(subquery)) {
+	static constexpr const QueryNodeType TYPE = QueryNodeType::BOUND_SUBQUERY_NODE;
+
+public:
+	BoundSubqueryNode(shared_ptr<Binder> subquery_binder, unique_ptr<BoundQueryNode> bound_node,
+	                  unique_ptr<SelectStatement> subquery)
+	    : QueryNode(QueryNodeType::BOUND_SUBQUERY_NODE), subquery_binder(std::move(subquery_binder)),
+	      bound_node(std::move(bound_node)), subquery(std::move(subquery)) {
 	}
 
-	unique_ptr<Binder> subquery_binder;
+	shared_ptr<Binder> subquery_binder;
 	unique_ptr<BoundQueryNode> bound_node;
-	unique_ptr<QueryNode> subquery;
+	unique_ptr<SelectStatement> subquery;
 
-	const vector<unique_ptr<ParsedExpression>> &GetSelectList() const {
-		throw Exception("Cannot get select list of bound subquery node");
+	const vector<unique_ptr<ParsedExpression>> &GetSelectList() const override {
+		throw InternalException("Cannot get select list of bound subquery node");
 	}
 
-	unique_ptr<QueryNode> Copy() {
-		throw Exception("Cannot copy bound subquery node");
+	string ToString() const override {
+		throw InternalException("Cannot ToString bound subquery node");
+	}
+	unique_ptr<QueryNode> Copy() const override {
+		throw InternalException("Cannot copy bound subquery node");
+	}
+
+	void Serialize(Serializer &serializer) const override {
+		throw InternalException("Cannot serialize bound subquery node");
 	}
 };
 
 BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t depth) {
-	if (expr.subquery->type != QueryNodeType::BOUND_SUBQUERY_NODE) {
-		assert(depth == 0);
+	if (expr.subquery->node->type != QueryNodeType::BOUND_SUBQUERY_NODE) {
+		D_ASSERT(depth == 0);
 		// first bind the actual subquery in a new binder
-		auto subquery_binder = make_unique<Binder>(context, &binder);
-		// the subquery may refer to CTEs from the parent query
-		subquery_binder->CTE_bindings = binder.CTE_bindings;
-		auto bound_node = subquery_binder->BindNode(*expr.subquery);
+		auto subquery_binder = Binder::CreateBinder(context, &binder);
+		subquery_binder->can_contain_nulls = true;
+		auto bound_node = subquery_binder->BindNode(*expr.subquery->node);
 		// check the correlated columns of the subquery for correlated columns with depth > 1
 		for (idx_t i = 0; i < subquery_binder->correlated_columns.size(); i++) {
 			CorrelatedColumnInfo corr = subquery_binder->correlated_columns[i];
@@ -47,45 +56,51 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 			}
 		}
 		if (expr.subquery_type != SubqueryType::EXISTS && bound_node->types.size() > 1) {
-			throw BinderException("Subquery returns %zu columns - expected 1", bound_node->types.size());
+			throw BinderException(binder.FormatError(
+			    expr, StringUtil::Format("Subquery returns %zu columns - expected 1", bound_node->types.size())));
 		}
-		expr.subquery = make_unique<BoundSubqueryNode>(move(subquery_binder), move(bound_node), move(expr.subquery));
+		auto prior_subquery = std::move(expr.subquery);
+		expr.subquery = make_uniq<SelectStatement>();
+		expr.subquery->node =
+		    make_uniq<BoundSubqueryNode>(std::move(subquery_binder), std::move(bound_node), std::move(prior_subquery));
 	}
 	// now bind the child node of the subquery
 	if (expr.child) {
 		// first bind the children of the subquery, if any
-		string error = Bind(&expr.child, depth);
+		string error = Bind(expr.child, depth);
 		if (!error.empty()) {
 			return BindResult(error);
 		}
 	}
 	// both binding the child and binding the subquery was successful
-	assert(expr.subquery->type == QueryNodeType::BOUND_SUBQUERY_NODE);
-	auto bound_subquery = (BoundSubqueryNode *)expr.subquery.get();
-	auto child = (BoundExpression *)expr.child.get();
-	auto subquery_binder = move(bound_subquery->subquery_binder);
-	auto bound_node = move(bound_subquery->bound_node);
-	SQLType return_type =
-	    expr.subquery_type == SubqueryType::SCALAR ? bound_node->types[0] : SQLType(SQLTypeId::BOOLEAN);
-	if (return_type.id == SQLTypeId::UNKNOWN) {
-		throw BinderException("Could not determine type of parameters: try adding explicit type casts");
+	D_ASSERT(expr.subquery->node->type == QueryNodeType::BOUND_SUBQUERY_NODE);
+	auto &bound_subquery = expr.subquery->node->Cast<BoundSubqueryNode>();
+	auto subquery_binder = std::move(bound_subquery.subquery_binder);
+	auto bound_node = std::move(bound_subquery.bound_node);
+	LogicalType return_type =
+	    expr.subquery_type == SubqueryType::SCALAR ? bound_node->types[0] : LogicalType(LogicalTypeId::BOOLEAN);
+	if (return_type.id() == LogicalTypeId::UNKNOWN) {
+		return_type = LogicalType::SQLNULL;
 	}
 
-	auto result = make_unique<BoundSubqueryExpression>(GetInternalType(return_type));
+	auto result = make_uniq<BoundSubqueryExpression>(return_type);
 	if (expr.subquery_type == SubqueryType::ANY) {
 		// ANY comparison
 		// cast child and subquery child to equivalent types
-		assert(bound_node->types.size() == 1);
-		auto compare_type = MaxSQLType(child->sql_type, bound_node->types[0]);
-		child->expr = BoundCastExpression::AddCastToType(move(child->expr), child->sql_type, compare_type);
+		D_ASSERT(bound_node->types.size() == 1);
+		auto &child = BoundExpression::GetExpression(*expr.child);
+		auto compare_type = LogicalType::MaxLogicalType(child->return_type, bound_node->types[0]);
+		child = BoundCastExpression::AddCastToType(context, std::move(child), compare_type);
 		result->child_type = bound_node->types[0];
 		result->child_target = compare_type;
+		result->child = std::move(child);
 	}
-	result->binder = move(subquery_binder);
-	result->subquery = move(bound_node);
+	result->binder = std::move(subquery_binder);
+	result->subquery = std::move(bound_node);
 	result->subquery_type = expr.subquery_type;
-	result->child = child ? move(child->expr) : nullptr;
 	result->comparison_type = expr.comparison_type;
 
-	return BindResult(move(result), return_type);
+	return BindResult(std::move(result));
 }
+
+} // namespace duckdb

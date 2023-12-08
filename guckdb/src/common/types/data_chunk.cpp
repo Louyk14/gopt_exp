@@ -1,233 +1,338 @@
 #include "duckdb/common/types/data_chunk.hpp"
 
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/printer.hpp"
-#include "duckdb/common/serializer.hpp"
-#include "duckdb/common/types/null_value.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/sel_cache.hpp"
+#include "duckdb/common/types/vector_cache.hpp"
+#include "duckdb/common/vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
-#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/execution/execution_context.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-DataChunk::DataChunk() : count(0) {
+DataChunk::DataChunk() : count(0), capacity(STANDARD_VECTOR_SIZE) {
 }
 
-void DataChunk::InitializeEmpty(vector<TypeId> &types) {
-	assert(types.size() > 0);
-	for (idx_t i = 0; i < types.size(); i++) {
-		data.emplace_back(Vector(types[i], nullptr));
+DataChunk::~DataChunk() {
+}
+
+void DataChunk::InitializeEmpty(const vector<LogicalType> &types) {
+	InitializeEmpty(types.begin(), types.end());
+}
+
+void DataChunk::Initialize(Allocator &allocator, const vector<LogicalType> &types, idx_t capacity_p) {
+	Initialize(allocator, types.begin(), types.end(), capacity_p);
+}
+
+void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &types, idx_t capacity_p) {
+	Initialize(Allocator::Get(context), types, capacity_p);
+}
+
+void DataChunk::Initialize(Allocator &allocator, vector<LogicalType>::const_iterator begin,
+                           vector<LogicalType>::const_iterator end, idx_t capacity_p) {
+	D_ASSERT(data.empty());                   // can only be initialized once
+	D_ASSERT(std::distance(begin, end) != 0); // empty chunk not allowed
+	capacity = capacity_p;
+	for (; begin != end; begin++) {
+		VectorCache cache(allocator, *begin, capacity);
+		data.emplace_back(cache);
+		vector_caches.push_back(std::move(cache));
 	}
 }
 
-void DataChunk::Initialize(vector<TypeId> &types) {
-	assert(types.size() > 0);
-	InitializeEmpty(types);
-	for (idx_t i = 0; i < types.size(); i++) {
-		data[i].Initialize();
+void DataChunk::Initialize(ClientContext &context, vector<LogicalType>::const_iterator begin,
+                           vector<LogicalType>::const_iterator end, idx_t capacity_p) {
+	Initialize(Allocator::Get(context), begin, end, capacity_p);
+}
+
+void DataChunk::InitializeEmpty(vector<LogicalType>::const_iterator begin, vector<LogicalType>::const_iterator end) {
+	capacity = STANDARD_VECTOR_SIZE;
+	D_ASSERT(data.empty());                   // can only be initialized once
+	D_ASSERT(std::distance(begin, end) != 0); // empty chunk not allowed
+	for (; begin != end; begin++) {
+		data.emplace_back(*begin, nullptr);
 	}
 }
 
 void DataChunk::Reset() {
-	for (idx_t i = 0; i < column_count(); i++) {
-		data[i].Initialize();
+	if (data.empty()) {
+		return;
 	}
+	if (vector_caches.size() != data.size()) {
+		throw InternalException("VectorCache and column count mismatch in DataChunk::Reset");
+	}
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		data[i].ResetFromCache(vector_caches[i]);
+	}
+	capacity = STANDARD_VECTOR_SIZE;
 	SetCardinality(0);
 }
 
 void DataChunk::Destroy() {
 	data.clear();
+	vector_caches.clear();
+	capacity = 0;
 	SetCardinality(0);
 }
 
 Value DataChunk::GetValue(idx_t col_idx, idx_t index) const {
-	assert(index < size());
+	D_ASSERT(index < size());
 	return data[col_idx].GetValue(index);
 }
 
-void DataChunk::SetValue(idx_t col_idx, idx_t index, Value val) {
-	data[col_idx].SetValue(index, move(val));
+void DataChunk::SetValue(idx_t col_idx, idx_t index, const Value &val) {
+	data[col_idx].SetValue(index, val);
 }
 
-idx_t DataChunk::GetZoneFilter(column_t column_idx, vector<bool> &zone_filter) {
-	VectorData rid_data;
-	data[column_idx].Orrify(count, rid_data);
-	auto rid = (int64_t *)rid_data.data;
-	for (idx_t i = 0; i < count; i++) {
-		idx_t position = rid_data.sel->get_index(i);
-		zone_filter[rid[position] / STANDARD_VECTOR_SIZE] = false;
+bool DataChunk::AllConstant() const {
+	for (auto &v : data) {
+		if (v.GetVectorType() != VectorType::CONSTANT_VECTOR) {
+			return false;
+		}
 	}
-	return count;
+	return true;
 }
 
 void DataChunk::Reference(DataChunk &chunk) {
-	assert(chunk.column_count() <= column_count());
+	D_ASSERT(chunk.ColumnCount() <= ColumnCount());
+	SetCapacity(chunk);
 	SetCardinality(chunk);
-	for (idx_t i = 0; i < chunk.column_count(); i++) {
+	for (idx_t i = 0; i < chunk.ColumnCount(); i++) {
 		data[i].Reference(chunk.data[i]);
 	}
 }
 
-void DataChunk::Copy(DataChunk &other, idx_t offset) {
-	assert(column_count() == other.column_count());
-	assert(other.size() == 0);
+void DataChunk::Move(DataChunk &chunk) {
+	SetCardinality(chunk);
+	SetCapacity(chunk);
+	data = std::move(chunk.data);
+	vector_caches = std::move(chunk.vector_caches);
 
-	for (idx_t i = 0; i < column_count(); i++) {
-		assert(other.data[i].vector_type == VectorType::FLAT_VECTOR);
+	chunk.Destroy();
+}
+
+void DataChunk::Copy(DataChunk &other, idx_t offset) const {
+	D_ASSERT(ColumnCount() == other.ColumnCount());
+	D_ASSERT(other.size() == 0);
+
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		D_ASSERT(other.data[i].GetVectorType() == VectorType::FLAT_VECTOR);
 		VectorOperations::Copy(data[i], other.data[i], size(), offset, 0);
 	}
 	other.SetCardinality(size() - offset);
 }
 
-void DataChunk::Append(DataChunk &other) {
+void DataChunk::Copy(DataChunk &other, const SelectionVector &sel, const idx_t source_count, const idx_t offset) const {
+	D_ASSERT(ColumnCount() == other.ColumnCount());
+	D_ASSERT(other.size() == 0);
+	D_ASSERT((offset + source_count) <= size());
+
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		D_ASSERT(other.data[i].GetVectorType() == VectorType::FLAT_VECTOR);
+		VectorOperations::Copy(data[i], other.data[i], sel, source_count, offset, 0);
+	}
+	other.SetCardinality(source_count - offset);
+}
+
+void DataChunk::Split(DataChunk &other, idx_t split_idx) {
+	D_ASSERT(other.size() == 0);
+	D_ASSERT(other.data.empty());
+	D_ASSERT(split_idx < data.size());
+	const idx_t num_cols = data.size();
+	for (idx_t col_idx = split_idx; col_idx < num_cols; col_idx++) {
+		other.data.push_back(std::move(data[col_idx]));
+		other.vector_caches.push_back(std::move(vector_caches[col_idx]));
+	}
+	for (idx_t col_idx = split_idx; col_idx < num_cols; col_idx++) {
+		data.pop_back();
+		vector_caches.pop_back();
+	}
+	other.SetCapacity(*this);
+	other.SetCardinality(*this);
+}
+
+void DataChunk::Fuse(DataChunk &other) {
+	D_ASSERT(other.size() == size());
+	const idx_t num_cols = other.data.size();
+	for (idx_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+		data.emplace_back(std::move(other.data[col_idx]));
+		vector_caches.emplace_back(std::move(other.vector_caches[col_idx]));
+	}
+	other.Destroy();
+}
+
+void DataChunk::ReferenceColumns(DataChunk &other, const vector<column_t> &column_ids) {
+	D_ASSERT(ColumnCount() == column_ids.size());
+	Reset();
+	for (idx_t col_idx = 0; col_idx < ColumnCount(); col_idx++) {
+		auto &other_col = other.data[column_ids[col_idx]];
+		auto &this_col = data[col_idx];
+		D_ASSERT(other_col.GetType() == this_col.GetType());
+		this_col.Reference(other_col);
+	}
+	SetCardinality(other.size());
+}
+
+void DataChunk::Append(const DataChunk &other, bool resize, SelectionVector *sel, idx_t sel_count) {
+	idx_t new_size = sel ? size() + sel_count : size() + other.size();
 	if (other.size() == 0) {
 		return;
 	}
-	if (column_count() != other.column_count()) {
-		throw OutOfRangeException("Column counts of appending chunk doesn't match!");
+	if (ColumnCount() != other.ColumnCount()) {
+		throw InternalException("Column counts of appending chunk doesn't match!");
 	}
-	for (idx_t i = 0; i < column_count(); i++) {
-		assert(data[i].vector_type == VectorType::FLAT_VECTOR);
-		VectorOperations::Copy(other.data[i], data[i], other.size(), 0, size());
+	if (new_size > capacity) {
+		if (resize) {
+			auto new_capacity = NextPowerOfTwo(new_size);
+			for (idx_t i = 0; i < ColumnCount(); i++) {
+				data[i].Resize(size(), new_capacity);
+			}
+			capacity = new_capacity;
+		} else {
+			throw InternalException("Can't append chunk to other chunk without resizing");
+		}
 	}
-	SetCardinality(size() + other.size());
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		D_ASSERT(data[i].GetVectorType() == VectorType::FLAT_VECTOR);
+		if (sel) {
+			VectorOperations::Copy(other.data[i], data[i], *sel, sel_count, 0, size());
+		} else {
+			VectorOperations::Copy(other.data[i], data[i], other.size(), 0, size());
+		}
+	}
+	SetCardinality(new_size);
 }
 
-void DataChunk::Normalify() {
-	for (idx_t i = 0; i < column_count(); i++) {
-		data[i].Normalify(size());
+void DataChunk::Flatten() {
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		data[i].Flatten(size());
 	}
 }
 
-vector<TypeId> DataChunk::GetTypes() {
-	vector<TypeId> types;
-	for (idx_t i = 0; i < column_count(); i++) {
-		types.push_back(data[i].type);
+vector<LogicalType> DataChunk::GetTypes() {
+	vector<LogicalType> types;
+	for (idx_t i = 0; i < ColumnCount(); i++) {
+		types.push_back(data[i].GetType());
 	}
 	return types;
 }
 
 string DataChunk::ToString() const {
-	string retval = "Chunk - [" + to_string(column_count()) + " Columns]\n";
-	for (idx_t i = 0; i < column_count(); i++) {
+	string retval = "Chunk - [" + to_string(ColumnCount()) + " Columns]\n";
+	for (idx_t i = 0; i < ColumnCount(); i++) {
 		retval += "- " + data[i].ToString(size()) + "\n";
 	}
 	return retval;
 }
 
-void DataChunk::Serialize(Serializer &serializer) {
+void DataChunk::Serialize(Serializer &serializer) const {
 	// write the count
-	serializer.Write<sel_t>(size());
-	serializer.Write<idx_t>(column_count());
-	for (idx_t col_idx = 0; col_idx < column_count(); col_idx++) {
-		// write the types
-		serializer.Write<int>((int)data[col_idx].type);
-	}
-	// write the data
-	for (idx_t col_idx = 0; col_idx < column_count(); col_idx++) {
-		data[col_idx].Serialize(size(), serializer);
-	}
+	auto row_count = size();
+	serializer.WriteProperty<sel_t>(100, "rows", row_count);
+	auto column_count = ColumnCount();
+
+	// Write the types
+	serializer.WriteList(101, "types", column_count,
+	                     [&](Serializer::List &list, idx_t i) { list.WriteElement(data[i].GetType()); });
+
+	// Write the data
+	serializer.WriteList(102, "columns", column_count, [&](Serializer::List &list, idx_t i) {
+		list.WriteObject([&](Serializer &object) {
+			// Reference the vector to avoid potentially mutating it during serialization
+			Vector serialized_vector(data[i].GetType());
+			serialized_vector.Reference(data[i]);
+			serialized_vector.Serialize(object, row_count);
+		});
+	});
 }
 
-void DataChunk::Deserialize(Deserializer &source) {
-	auto rows = source.Read<sel_t>();
-	idx_t column_count = source.Read<idx_t>();
+void DataChunk::Deserialize(Deserializer &deserializer) {
+	// read the count
+	auto row_count = deserializer.ReadProperty<sel_t>(100, "rows");
 
-	vector<TypeId> types;
-	for (idx_t i = 0; i < column_count; i++) {
-		types.push_back((TypeId)source.Read<int>());
-	}
-	Initialize(types);
+	// Read the types
+	vector<LogicalType> types;
+	deserializer.ReadList(101, "types", [&](Deserializer::List &list, idx_t i) {
+		auto type = list.ReadElement<LogicalType>();
+		types.push_back(type);
+	});
+	Initialize(Allocator::DefaultAllocator(), types);
+
 	// now load the column data
-	SetCardinality(rows);
-	for (idx_t i = 0; i < column_count; i++) {
-		data[i].Deserialize(rows, source);
-	}
-	Verify();
+	SetCardinality(row_count);
+
+	// Read the data
+	deserializer.ReadList(102, "columns", [&](Deserializer::List &list, idx_t i) {
+		list.ReadObject([&](Deserializer &object) { data[i].Deserialize(object, row_count); });
+	});
 }
 
-void DataChunk::Slice(const SelectionVector &sel_vector, idx_t count) {
-	this->count = count;
-	sel_cache_t merge_cache;
-	for (idx_t c = 0; c < column_count(); c++) {
-		data[c].Slice(sel_vector, count, merge_cache);
+void DataChunk::Slice(const SelectionVector &sel_vector, idx_t count_p) {
+	this->count = count_p;
+	SelCache merge_cache;
+	for (idx_t c = 0; c < ColumnCount(); c++) {
+		data[c].Slice(sel_vector, count_p, merge_cache);
 	}
 }
 
-void DataChunk::Slice(DataChunk &other, const SelectionVector &sel, idx_t count, idx_t col_offset) {
-	assert(other.column_count() <= col_offset + column_count());  // todo: ? other.column_count + col_offset <= column_count()
-	this->count = count;
-	sel_cache_t merge_cache;
-	for (idx_t c = 0; c < other.column_count(); c++) {
-		if (other.data[c].vector_type == VectorType::DICTIONARY_VECTOR) {
+void DataChunk::Slice(DataChunk &other, const SelectionVector &sel, idx_t count_p, idx_t col_offset) {
+	D_ASSERT(other.ColumnCount() <= col_offset + ColumnCount());
+	this->count = count_p;
+	SelCache merge_cache;
+	for (idx_t c = 0; c < other.ColumnCount(); c++) {
+		if (other.data[c].GetVectorType() == VectorType::DICTIONARY_VECTOR) {
 			// already a dictionary! merge the dictionaries
 			data[col_offset + c].Reference(other.data[c]);
-			data[col_offset + c].Slice(sel, count, merge_cache);
+			data[col_offset + c].Slice(sel, count_p, merge_cache);
 		} else {
-			data[col_offset + c].Slice(other.data[c], sel, count);
+			data[col_offset + c].Slice(other.data[c], sel, count_p);
 		}
 	}
 }
 
-void DataChunk::Slice(DataChunk &other, const SelectionVector &sel, idx_t count, idx_t col_offset, idx_t column_num) {
-	assert(other.column_count() <= col_offset + column_count());  // todo: ? other.column_count + col_offset <= column_count()
-	this->count = count;
-	sel_cache_t merge_cache;
-	for (idx_t c = 0; c < column_num; c++) {
-		if (other.data[c].vector_type == VectorType::DICTIONARY_VECTOR) {
-			// already a dictionary! merge the dictionaries
-			data[col_offset + c].Reference(other.data[c]);
-			data[col_offset + c].Slice(sel, count, merge_cache);
-		} else {
-			data[col_offset + c].Slice(other.data[c], sel, count);
-		}
-	}
-}
-
-void DataChunk::Slice(DataChunk &other, const SelectionVector &sel, idx_t count, idx_t col_offset, vector<idx_t> &projection) {
-//	assert(other.column_count() <= col_offset + column_count());  // todo: ? other.column_count + col_offset <= column_count()
-	assert(col_offset + projection.size() <= column_count());
-	this->count = count;
-	sel_cache_t merge_cache;
-	for (idx_t c = 0; c < projection.size(); c++) {
-		idx_t o_c = projection[c];
-		if (other.data[o_c].vector_type == VectorType::DICTIONARY_VECTOR) {
-			// already a dictionary! merge the dictionaries
-			data[col_offset + c].Reference(other.data[o_c]);
-			data[col_offset + c].Slice(sel, count, merge_cache);
-		} else {
-			data[col_offset + c].Slice(other.data[o_c], sel, count);
-		}
-	}
-}
-
-unique_ptr<VectorData[]> DataChunk::Orrify() {
-	auto orrified_data = unique_ptr<VectorData[]>(new VectorData[column_count()]);
-	for (idx_t col_idx = 0; col_idx < column_count(); col_idx++) {
-		data[col_idx].Orrify(size(), orrified_data[col_idx]);
+unsafe_unique_array<UnifiedVectorFormat> DataChunk::ToUnifiedFormat() {
+	auto orrified_data = make_unsafe_uniq_array<UnifiedVectorFormat>(ColumnCount());
+	for (idx_t col_idx = 0; col_idx < ColumnCount(); col_idx++) {
+		data[col_idx].ToUnifiedFormat(size(), orrified_data[col_idx]);
 	}
 	return orrified_data;
 }
 
 void DataChunk::Hash(Vector &result) {
-	assert(result.type == TypeId::HASH);
+	D_ASSERT(result.GetType().id() == LogicalType::HASH);
 	VectorOperations::Hash(data[0], result, size());
-	for (idx_t i = 1; i < column_count(); i++) {
+	for (idx_t i = 1; i < ColumnCount(); i++) {
 		VectorOperations::CombineHash(result, data[i], size());
+	}
+}
+
+void DataChunk::Hash(vector<idx_t> &column_ids, Vector &result) {
+	D_ASSERT(result.GetType().id() == LogicalType::HASH);
+	D_ASSERT(!column_ids.empty());
+
+	VectorOperations::Hash(data[column_ids[0]], result, size());
+	for (idx_t i = 1; i < column_ids.size(); i++) {
+		VectorOperations::CombineHash(result, data[column_ids[i]], size());
 	}
 }
 
 void DataChunk::Verify() {
 #ifdef DEBUG
-	assert(size() <= STANDARD_VECTOR_SIZE);
+	D_ASSERT(size() <= capacity);
 	// verify that all vectors in this chunk have the chunk selection vector
-	for (idx_t i = 0; i < column_count(); i++) {
+	for (idx_t i = 0; i < ColumnCount(); i++) {
 		data[i].Verify(size());
 	}
 #endif
 }
 
-void DataChunk::Print() {
+void DataChunk::Print() const {
 	Printer::Print(ToString());
 }
+
+} // namespace duckdb

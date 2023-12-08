@@ -15,9 +15,18 @@ namespace duckdb {
 
 class DropStatement : public SQLStatement {
 public:
-	DropStatement() : SQLStatement(StatementType::DROP_STATEMENT), info(make_unique<DropInfo>()){};
+	static constexpr const StatementType TYPE = StatementType::DROP_STATEMENT;
+
+public:
+	DropStatement();
 
 	unique_ptr<DropInfo> info;
+
+protected:
+	DropStatement(const DropStatement &other);
+
+public:
+	unique_ptr<SQLStatement> Copy() const override;
 };
 
 } // namespace duckdb

@@ -1,8 +1,7 @@
 #include "duckdb/function/scalar/operators.hpp"
 #include "duckdb/common/exception.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 void BuiltinFunctions::RegisterOperators() {
 	Register<AddFun>();
@@ -10,9 +9,6 @@ void BuiltinFunctions::RegisterOperators() {
 	Register<MultiplyFun>();
 	Register<DivideFun>();
 	Register<ModFun>();
-	Register<LeftShiftFun>();
-	Register<RightShiftFun>();
-	Register<BitwiseAndFun>();
-	Register<BitwiseOrFun>();
-	Register<BitwiseXorFun>();
 }
+
+} // namespace duckdb

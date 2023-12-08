@@ -1,13 +1,17 @@
 #include "duckdb/planner/operator/logical_empty_result.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 LogicalEmptyResult::LogicalEmptyResult(unique_ptr<LogicalOperator> op)
-    : LogicalOperator(LogicalOperatorType::EMPTY_RESULT) {
+    : LogicalOperator(LogicalOperatorType::LOGICAL_EMPTY_RESULT) {
 
 	this->bindings = op->GetColumnBindings();
 
 	op->ResolveOperatorTypes();
 	this->return_types = op->types;
 }
+
+LogicalEmptyResult::LogicalEmptyResult() : LogicalOperator(LogicalOperatorType::LOGICAL_EMPTY_RESULT) {
+}
+
+} // namespace duckdb

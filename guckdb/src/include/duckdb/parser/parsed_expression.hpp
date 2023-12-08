@@ -9,10 +9,14 @@
 #pragma once
 
 #include "duckdb/parser/base_expression.hpp"
+#include "duckdb/common/vector.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/qualified_name.hpp"
+#include "duckdb/parser/expression_util.hpp"
 
 namespace duckdb {
-class Serializer;
 class Deserializer;
+class Serializer;
 
 //!  The ParsedExpression class is a base class that can represent any expression
 //!  part of a SQL statement.
@@ -29,6 +33,9 @@ public:
 	ParsedExpression(ExpressionType type, ExpressionClass expression_class) : BaseExpression(type, expression_class) {
 	}
 
+	//! The location in the query (if any)
+	idx_t query_location = DConstants::INVALID_INDEX;
+
 public:
 	bool IsAggregate() const override;
 	bool IsWindow() const override;
@@ -36,17 +43,18 @@ public:
 	bool IsScalar() const override;
 	bool HasParameter() const override;
 
-	bool Equals(const BaseExpression *other) const override;
+	bool Equals(const BaseExpression &other) const override;
 	hash_t Hash() const override;
 
 	//! Create a copy of this expression
 	virtual unique_ptr<ParsedExpression> Copy() const = 0;
 
-	//! Serializes an Expression to a stand-alone binary blob
-	virtual void Serialize(Serializer &serializer);
-	//! Deserializes a blob back into an Expression [CAN THROW:
-	//! SerializationException]
-	static unique_ptr<ParsedExpression> Deserialize(Deserializer &source);
+	virtual void Serialize(Serializer &serializer) const;
+	static unique_ptr<ParsedExpression> Deserialize(Deserializer &deserializer);
+
+	static bool Equals(const unique_ptr<ParsedExpression> &left, const unique_ptr<ParsedExpression> &right);
+	static bool ListEquals(const vector<unique_ptr<ParsedExpression>> &left,
+	                       const vector<unique_ptr<ParsedExpression>> &right);
 
 protected:
 	//! Copy base Expression properties from another expression to this one,

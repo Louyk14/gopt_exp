@@ -7,6 +7,9 @@ namespace duckdb {
 class SIPJoinRewriter : public LogicalOperatorVisitor {
 
 public:
+    explicit SIPJoinRewriter(Binder &binder, ClientContext &context) : binder(binder), context(context) {
+    }
+
 	//! Search for joins to be rewritten
 	unique_ptr<LogicalOperator> Rewrite(unique_ptr<LogicalOperator> op);
 
@@ -14,6 +17,8 @@ public:
 	void VisitOperator(LogicalOperator &op) override;
 
 private:
+    ClientContext& context;
+    Binder &binder;
 	unordered_map<idx_t, vector<RAIInfo *>> rai_info_map;
 
 	void DoRewrite(LogicalComparisonJoin &join);

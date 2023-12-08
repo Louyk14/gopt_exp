@@ -15,17 +15,29 @@ namespace duckdb {
 
 class LogicalExecute : public LogicalOperator {
 public:
-	LogicalExecute(PreparedStatementData *prepared)
-	    : LogicalOperator(LogicalOperatorType::EXECUTE), prepared(prepared) {
-		assert(prepared);
+	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_EXECUTE;
+
+public:
+	explicit LogicalExecute(shared_ptr<PreparedStatementData> prepared_p)
+	    : LogicalOperator(LogicalOperatorType::LOGICAL_EXECUTE), prepared(std::move(prepared_p)) {
+		D_ASSERT(prepared);
 		types = prepared->types;
 	}
 
-	PreparedStatementData *prepared;
+	shared_ptr<PreparedStatementData> prepared;
+
+public:
+	//! Skips the serialization check in VerifyPlan
+	bool SupportSerialization() const override {
+		return false;
+	}
 
 protected:
 	void ResolveTypes() override {
 		// already resolved
+	}
+	vector<ColumnBinding> GetColumnBindings() override {
+		return GenerateColumnBindings(0, types.size());
 	}
 };
 } // namespace duckdb

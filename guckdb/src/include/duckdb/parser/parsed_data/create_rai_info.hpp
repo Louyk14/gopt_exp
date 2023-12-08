@@ -18,6 +18,12 @@ struct CreateRAIInfo : public CreateInfo {
 	CreateRAIInfo() : CreateInfo(CatalogType::RAI), name(""), table(nullptr), direction(RAIDirection::DIRECTED) {
 	}
 
+    unique_ptr<CreateInfo> Copy() const {
+        auto result = make_uniq<CreateRAIInfo>();
+        std::cout << "Copy function of CreateRAIInfo is no implemented" << std::endl;
+        return std::move(result);
+    }
+
 	string name;
 	unique_ptr<TableRef> table;
 	RAIDirection direction;

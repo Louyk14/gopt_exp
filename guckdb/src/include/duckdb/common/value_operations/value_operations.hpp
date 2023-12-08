@@ -14,23 +14,6 @@ namespace duckdb {
 
 struct ValueOperations {
 	//===--------------------------------------------------------------------===//
-	// Numeric Operations
-	//===--------------------------------------------------------------------===//
-	// A + B
-	static Value Add(const Value &left, const Value &right);
-	// A - B
-	static Value Subtract(const Value &left, const Value &right);
-	// A * B
-	static Value Multiply(const Value &left, const Value &right);
-	// A / B
-	static Value Divide(const Value &left, const Value &right);
-	// A % B
-	static Value Modulo(const Value &left, const Value &right);
-	// // MIN(A, B)
-	// static Value Min(const Value &left, const Value &right);
-	// // MAX(A, B)
-	// static Value Max(const Value &left, const Value &right);
-	//===--------------------------------------------------------------------===//
 	// Comparison Operations
 	//===--------------------------------------------------------------------===//
 	// A == B
@@ -46,9 +29,19 @@ struct ValueOperations {
 	// A <= B
 	static bool LessThanEquals(const Value &left, const Value &right);
 	//===--------------------------------------------------------------------===//
-	// Hash functions
+	// Distinction Operations
 	//===--------------------------------------------------------------------===//
-	// result = HASH(A)
-	static hash_t Hash(const Value &left);
+	// A == B, NULLs equal
+	static bool NotDistinctFrom(const Value &left, const Value &right);
+	// A != B, NULLs equal
+	static bool DistinctFrom(const Value &left, const Value &right);
+	// A > B, NULLs last
+	static bool DistinctGreaterThan(const Value &left, const Value &right);
+	// A >= B, NULLs last
+	static bool DistinctGreaterThanEquals(const Value &left, const Value &right);
+	// A < B, NULLs last
+	static bool DistinctLessThan(const Value &left, const Value &right);
+	// A <= B, NULLs last
+	static bool DistinctLessThanEquals(const Value &left, const Value &right);
 };
 } // namespace duckdb

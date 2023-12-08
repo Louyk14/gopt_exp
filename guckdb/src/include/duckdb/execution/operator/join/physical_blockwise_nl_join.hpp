@@ -18,19 +18,58 @@ namespace duckdb {
 //! RHS.
 class PhysicalBlockwiseNLJoin : public PhysicalJoin {
 public:
+	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::BLOCKWISE_NL_JOIN;
+
+public:
 	PhysicalBlockwiseNLJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left, unique_ptr<PhysicalOperator> right,
-	                        unique_ptr<Expression> condition, JoinType join_type);
+	                        unique_ptr<Expression> condition, JoinType join_type, idx_t estimated_cardinality);
 
 	unique_ptr<Expression> condition;
 
 public:
-	void GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-	                      SelectionVector *sel = nullptr, Vector *rid_vector = nullptr,
-	                      DataChunk *rai_chunk = nullptr) override;
+	// Operator Interface
+	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 
-	unique_ptr<PhysicalOperatorState> GetOperatorState() override;
+	bool ParallelOperator() const override {
+		return true;
+	}
 
-	string ExtraRenderInformation() const override;
+protected:
+	// CachingOperatorState Interface
+	OperatorResultType ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+	                                   GlobalOperatorState &gstate, OperatorState &state) const override;
+
+public:
+	// Source interface
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
+	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
+	                                                 GlobalSourceState &gstate) const override;
+	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+
+	bool IsSource() const override {
+		return IsRightOuterJoin(join_type);
+	}
+	bool ParallelSource() const override {
+		return true;
+	}
+
+public:
+	// Sink interface
+	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
+	unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
+	SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const override;
+	SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+	                          OperatorSinkFinalizeInput &input) const override;
+
+	bool IsSink() const override {
+		return true;
+	}
+	bool ParallelSink() const override {
+		return true;
+	}
+
+public:
+	string ParamsToString() const override;
 };
 
 } // namespace duckdb

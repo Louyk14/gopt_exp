@@ -15,17 +15,22 @@ namespace duckdb {
 
 class BoundConstantExpression : public Expression {
 public:
-	BoundConstantExpression(Value value);
+	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_CONSTANT;
+
+public:
+	explicit BoundConstantExpression(Value value);
 
 	Value value;
 
 public:
 	string ToString() const override;
 
-	bool Equals(const BaseExpression *other) const override;
+	bool Equals(const BaseExpression &other) const override;
 	hash_t Hash() const override;
-    substrait::AggregateFunction* ToAggregateFunction() const override;
 
 	unique_ptr<Expression> Copy() override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 };
 } // namespace duckdb

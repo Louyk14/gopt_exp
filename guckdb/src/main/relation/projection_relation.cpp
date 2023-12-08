@@ -7,9 +7,9 @@ namespace duckdb {
 
 ProjectionRelation::ProjectionRelation(shared_ptr<Relation> child_p,
                                        vector<unique_ptr<ParsedExpression>> parsed_expressions, vector<string> aliases)
-    : Relation(child_p->context, RelationType::PROJECTION_RELATION), expressions(move(parsed_expressions)),
-      child(move(child_p)) {
-	if (aliases.size() > 0) {
+    : Relation(child_p->context, RelationType::PROJECTION_RELATION), expressions(std::move(parsed_expressions)),
+      child(std::move(child_p)) {
+	if (!aliases.empty()) {
 		if (aliases.size() != expressions.size()) {
 			throw ParserException("Aliases list length must match expression list length!");
 		}
@@ -18,7 +18,7 @@ ProjectionRelation::ProjectionRelation(shared_ptr<Relation> child_p,
 		}
 	}
 	// bind the expressions
-	context.TryBindRelation(*this, this->columns);
+	context.GetContext()->TryBindRelation(*this, this->columns);
 }
 
 unique_ptr<QueryNode> ProjectionRelation::GetQueryNode() {
@@ -32,12 +32,12 @@ unique_ptr<QueryNode> ProjectionRelation::GetQueryNode() {
 		result = child->GetQueryNode();
 	} else {
 		// child node is not a join: create a new select node and push the child as a table reference
-		auto select = make_unique<SelectNode>();
+		auto select = make_uniq<SelectNode>();
 		select->from_table = child->GetTableRef();
-		result = move(select);
+		result = std::move(select);
 	}
-	assert(result->type == QueryNodeType::SELECT_NODE);
-	auto &select_node = (SelectNode &)*result;
+	D_ASSERT(result->type == QueryNodeType::SELECT_NODE);
+	auto &select_node = result->Cast<SelectNode>();
 	select_node.aggregate_handling = AggregateHandling::NO_AGGREGATES_ALLOWED;
 	select_node.select_list.clear();
 	for (auto &expr : expressions) {
@@ -60,7 +60,7 @@ string ProjectionRelation::ToString(idx_t depth) {
 		if (i != 0) {
 			str += ", ";
 		}
-		str += expressions[i]->ToString();
+		str += expressions[i]->ToString() + " as " + expressions[i]->alias;
 	}
 	str += "]\n";
 	return str + child->ToString(depth + 1);

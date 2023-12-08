@@ -1,36 +1,33 @@
 #include "duckdb/parser/tableref/table_function_ref.hpp"
+#include "duckdb/common/vector.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
-#include "duckdb/common/serializer.hpp"
+namespace duckdb {
 
-using namespace duckdb;
-using namespace std;
+TableFunctionRef::TableFunctionRef() : TableRef(TableReferenceType::TABLE_FUNCTION) {
+}
 
-bool TableFunctionRef::Equals(const TableRef *other_) const {
-	if (!TableRef::Equals(other_)) {
+string TableFunctionRef::ToString() const {
+	return BaseToString(function->ToString(), column_name_alias);
+}
+
+bool TableFunctionRef::Equals(const TableRef &other_p) const {
+	if (!TableRef::Equals(other_p)) {
 		return false;
 	}
-	auto other = (TableFunctionRef *)other_;
-	return function->Equals(other->function.get());
-}
-
-void TableFunctionRef::Serialize(Serializer &serializer) {
-	TableRef::Serialize(serializer);
-	function->Serialize(serializer);
-}
-
-unique_ptr<TableRef> TableFunctionRef::Deserialize(Deserializer &source) {
-	auto result = make_unique<TableFunctionRef>();
-
-	result->function = ParsedExpression::Deserialize(source);
-
-	return move(result);
+	auto &other = other_p.Cast<TableFunctionRef>();
+	return function->Equals(*other.function);
 }
 
 unique_ptr<TableRef> TableFunctionRef::Copy() {
-	auto copy = make_unique<TableFunctionRef>();
+	auto copy = make_uniq<TableFunctionRef>();
 
 	copy->function = function->Copy();
-	copy->alias = alias;
+	copy->column_name_alias = column_name_alias;
+	CopyProperties(*copy);
 
-	return move(copy);
+	return std::move(copy);
 }
+
+} // namespace duckdb

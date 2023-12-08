@@ -6,12 +6,12 @@
 using namespace duckdb;
 using namespace std;
 
-unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreatePlan(LogicalCreateRAI &op) {
+duckdb::unique_ptr<PhysicalOperator> PhysicalPlanGenerator::CreatePlan(LogicalCreateRAI &op) {
 	assert(op.children.size() == 1);
-	dependencies.insert(&op.table);
+	dependencies.AddDependency(op.table);
 
 	auto plan = CreatePlan(*op.children[0]);
-	auto create = make_unique<PhysicalCreateRAI>(op, op.name, op.table, op.rai_direction, op.column_ids,
+	auto create = make_uniq<PhysicalCreateRAI>(op, op.name, op.table, op.rai_direction, op.column_ids,
 	                                             op.referenced_tables, op.referenced_columns);
 	create->children.push_back(move(plan));
 	return create;

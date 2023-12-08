@@ -16,21 +16,21 @@ namespace duckdb {
 
 unique_ptr<BoundCreateRAIInfo> Binder::BindCreateRAIInfo(unique_ptr<CreateInfo> info) {
 	auto &base = (CreateRAIInfo &)*info;
-	auto result = make_unique<BoundCreateRAIInfo>(move(info));
+	auto result = make_uniq<BoundCreateRAIInfo>(move(info));
 
 	result->name = base.name;
 	result->table = Bind(*base.table);
 	result->rai_direction = base.direction;
 	for (auto &ref : base.referenced_tables) {
-		result->referenced_tables.push_back(Bind(*ref));
+		result->referenced_tables.push_back(move(Bind(*ref)));
 	}
 
 	RAIBinder binder(*this, context);
 	for (auto &expr : base.columns) {
-		result->columns.push_back(binder.Bind(expr));
+		result->columns.push_back(move(binder.Bind(expr)));
 	}
 	for (auto &expr : base.references) {
-		result->references.push_back(binder.Bind(expr));
+		result->references.push_back(move(binder.Bind(expr)));
 	}
 
 	auto plan = CreatePlan(*result);
@@ -52,26 +52,27 @@ static unique_ptr<LogicalOperator> CreatePlanForPKFKRAI(BoundCreateRAIInfo &boun
 	base_get->column_ids.push_back((column_t)-1);
 
 	string col_name = bound_info.references[0]->GetName();
-	auto entry = from_get->table->name_map.find(col_name);
-	if (entry != from_get->table->name_map.end()) {
-		referenced_column_ids.push_back(entry->second);
+    const ColumnList& entry = from_get->GetTable()->GetColumns();
+	if (entry.ColumnExists(col_name)) {
+		referenced_column_ids.push_back(entry.GetColumnIndex(col_name).index);
 	} else {
 		throw Exception("Column " + col_name + " in rai not found");
 	}
 	col_name = bound_info.references[1]->GetName();
 	for (auto &col : bound_info.columns) {
-		entry = base_get->table->name_map.find(col->GetName());
-		if (entry != base_get->table->name_map.end()) {
-			base_column_ids.push_back(entry->second);
+        const ColumnList& entry = base_get->GetTable()->GetColumns();
+        if (entry.ColumnExists(col->GetName())) {
+            string col_name = col->GetName();
+			base_column_ids.push_back(entry.GetColumnIndex(col_name).index);
 		} else {
 			throw Exception("Column " + col->GetName() + " in rai not found");
 		}
 	}
 
-	referenced_tables.push_back(from_get->table);
-	referenced_tables.push_back(base_get->table);
+	referenced_tables.push_back(from_get->GetTable().get());
+	referenced_tables.push_back(base_get->GetTable().get());
 
-	auto join = make_unique<LogicalComparisonJoin>(JoinType::LEFT);
+	auto join = make_uniq<LogicalComparisonJoin>(JoinType::LEFT);
 	join->AddChild(move(base_tbl_ref->get));
 	join->AddChild(move(from_tbl_ref->get));
 	JoinCondition join_condition;
@@ -80,24 +81,26 @@ static unique_ptr<LogicalOperator> CreatePlanForPKFKRAI(BoundCreateRAIInfo &boun
 	join_condition.right = move(bound_info.references[0]);
 	join->conditions.push_back(move(join_condition));
 
-	ColumnBinding proj_0(from_tbl_ref->table_index, 1);
-	ColumnBinding proj_1(base_tbl_ref->table_index, 1);
+
+
+	ColumnBinding proj_0(from_tbl_ref->table.oid, 1);
+	ColumnBinding proj_1(base_tbl_ref->table.oid, 1);
 	vector<unique_ptr<Expression>> selection_list;
-	selection_list.push_back(make_unique<BoundColumnRefExpression>(TypeId::INT64, proj_0));
-	selection_list.push_back(make_unique<BoundColumnRefExpression>(TypeId::INT64, proj_1));
-	auto projection = make_unique<LogicalProjection>(0, move(selection_list));
+	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_0));
+	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_1));
+	auto projection = make_uniq<LogicalProjection>(0, move(selection_list));
 	projection->AddChild(move(join));
 
 	ColumnBinding order_0(0, 0);
 	ColumnBinding order_1(0, 1);
-	BoundOrderByNode order_0_node(OrderType::ASCENDING, make_unique<BoundColumnRefExpression>(TypeId::INT64, order_0));
-	BoundOrderByNode order_1_node(OrderType::ASCENDING, make_unique<BoundColumnRefExpression>(TypeId::INT64, order_1));
+	BoundOrderByNode order_0_node(OrderType::ASCENDING, OrderByNullType::ORDER_DEFAULT, make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, order_0));
+	BoundOrderByNode order_1_node(OrderType::ASCENDING, OrderByNullType::ORDER_DEFAULT, make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, order_1));
 	vector<BoundOrderByNode> orders;
 	orders.push_back(move(order_1_node));
-	auto order_by = make_unique<LogicalOrder>(move(orders));
+	auto order_by = make_uniq<LogicalOrder>(move(orders));
 	order_by->AddChild(move(projection));
 
-	auto create_rai = make_unique<LogicalCreateRAI>(bound_info.name, *base_get->table, bound_info.rai_direction,
+	auto create_rai = make_uniq<LogicalCreateRAI>(bound_info.name, *base_get->GetTable(), bound_info.rai_direction,
 	                                                base_column_ids, referenced_tables, referenced_column_ids);
 	create_rai->AddChild(move(order_by));
 
@@ -120,32 +123,41 @@ static unique_ptr<LogicalOperator> CreatePlanForNonPKFPRAI(BoundCreateRAIInfo &b
 	base_get->column_ids.push_back((column_t)-1);
 
 	string col_name = bound_info.references[0]->GetName();
-	auto entry = ref_from_get->table->name_map.find(col_name);
-	if (entry != ref_from_get->table->name_map.end()) {
-		referenced_column_ids.push_back(entry->second);
+    const ColumnList& entry_from_get = ref_from_get->GetTable()->GetColumns();
+    if (entry_from_get.ColumnExists(col_name)) {
+		referenced_column_ids.push_back(entry_from_get.GetColumnIndex(col_name).index);
 	} else {
 		throw Exception("Column " + col_name + " in rai not found");
 	}
 	col_name = bound_info.references[1]->GetName();
-	entry = ref_to_get->table->name_map.find(col_name);
-	if (entry != ref_to_get->table->name_map.end()) {
-		referenced_column_ids.push_back(entry->second);
+    const ColumnList& entry_to_get = ref_to_get->GetTable()->GetColumns();
+    if (entry_to_get.ColumnExists(col_name)) {
+		referenced_column_ids.push_back(entry_to_get.GetColumnIndex(col_name).index);
 	} else {
 		throw Exception("Column " + col_name + " in rai not found");
 	}
 	for (auto &col : bound_info.columns) {
-		entry = base_get->table->name_map.find(col->GetName());
-		if (entry != base_get->table->name_map.end()) {
-			base_column_ids.push_back(entry->second);
+        string col_name = col->GetName();
+        const ColumnList& entry = base_get->GetTable()->GetColumns();
+        if (entry.ColumnExists(col_name)) {
+			base_column_ids.push_back(entry.GetColumnIndex(col_name).index);
 		} else {
 			throw Exception("Column " + col->GetName() + " in rai not found");
 		}
 	}
 
-	referenced_tables.push_back(ref_from_get->table);
-	referenced_tables.push_back(ref_to_get->table);
+	referenced_tables.push_back(ref_from_get->GetTable().get());
+	referenced_tables.push_back(ref_to_get->GetTable().get());
 
-	auto join = make_unique<LogicalComparisonJoin>(JoinType::LEFT);
+    LogicalGet* get_ref_from_tbl = (LogicalGet*) ref_from_tbl->get.get();
+    LogicalGet* get_base_tbl = (LogicalGet*) base_tbl->get.get();
+    LogicalGet* get_ref_to_tbl = (LogicalGet*) ref_to_tbl->get.get();
+
+    int ref_from_tbl_index = get_ref_from_tbl->table_index;
+    int base_tbl_index = get_base_tbl->table_index;
+    int ref_to_tbl_index = get_ref_to_tbl->table_index;
+
+	auto join = make_uniq<LogicalComparisonJoin>(JoinType::LEFT);
 	join->AddChild(move(base_tbl->get));
 	join->AddChild(move(ref_from_tbl->get));
 	JoinCondition join_condition;
@@ -154,7 +166,7 @@ static unique_ptr<LogicalOperator> CreatePlanForNonPKFPRAI(BoundCreateRAIInfo &b
 	join_condition.right = move(bound_info.references[0]);
 	join->conditions.push_back(move(join_condition));
 
-	auto parent_join = make_unique<LogicalComparisonJoin>(JoinType::LEFT);
+	auto parent_join = make_uniq<LogicalComparisonJoin>(JoinType::LEFT);
 	parent_join->AddChild(move(join));
 	parent_join->AddChild(move(ref_to_tbl->get));
 	JoinCondition parent_join_condition;
@@ -163,26 +175,27 @@ static unique_ptr<LogicalOperator> CreatePlanForNonPKFPRAI(BoundCreateRAIInfo &b
 	parent_join_condition.right = move(bound_info.references[1]);
 	parent_join->conditions.push_back(move(parent_join_condition));
 
-	ColumnBinding proj_0(ref_from_tbl->table_index, 1);
-	ColumnBinding proj_1(base_tbl->table_index, 2);
-	ColumnBinding proj_2(ref_to_tbl->table_index, 1);
+    ColumnBinding proj_0(ref_from_tbl_index, 1);
+	ColumnBinding proj_1(base_tbl_index, 2);
+	ColumnBinding proj_2(ref_to_tbl_index, 1);
 	vector<unique_ptr<Expression>> selection_list;
-	selection_list.push_back(make_unique<BoundColumnRefExpression>(TypeId::INT64, proj_0));
-	selection_list.push_back(make_unique<BoundColumnRefExpression>(TypeId::INT64, proj_1));
-	selection_list.push_back(make_unique<BoundColumnRefExpression>(TypeId::INT64, proj_2));
-	auto projection = make_unique<LogicalProjection>(0, move(selection_list));
+	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_0));
+	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_1));
+	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_2));
+
+	auto projection = make_uniq<LogicalProjection>(4, move(selection_list));
 	projection->AddChild(move(parent_join));
 
-	ColumnBinding order_0(0, 0);
-	ColumnBinding order_1(0, 1);
-	BoundOrderByNode order_0_node(OrderType::ASCENDING, make_unique<BoundColumnRefExpression>(TypeId::INT64, order_0));
-	BoundOrderByNode order_1_node(OrderType::ASCENDING, make_unique<BoundColumnRefExpression>(TypeId::INT64, order_1));
+	ColumnBinding order_0(4, 0);
+	ColumnBinding order_1(4, 1);
+	BoundOrderByNode order_0_node(OrderType::ASCENDING, OrderByNullType::ORDER_DEFAULT, make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, order_0));
+	BoundOrderByNode order_1_node(OrderType::ASCENDING, OrderByNullType::ORDER_DEFAULT, make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, order_1));
 	vector<BoundOrderByNode> orders;
 	orders.push_back(move(order_1_node));
-	auto order_by = make_unique<LogicalOrder>(move(orders));
+	auto order_by = make_uniq<LogicalOrder>(move(orders));
 	order_by->AddChild(move(projection));
 
-	auto create_rai = make_unique<LogicalCreateRAI>(bound_info.name, *base_get->table, bound_info.rai_direction,
+	auto create_rai = make_uniq<LogicalCreateRAI>(bound_info.name, *base_get->GetTable(), bound_info.rai_direction,
 	                                                base_column_ids, referenced_tables, referenced_column_ids);
 	create_rai->AddChild(move(order_by));
 

@@ -1,211 +1,245 @@
 #include "duckdb/execution/operator/persistent/physical_copy_to_file.hpp"
-
 #include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/common/hive_partitioning.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/file_opener.hpp"
+#include "duckdb/common/types/uuid.hpp"
+#include "duckdb/common/string_util.hpp"
 
 #include <algorithm>
-#include <fstream>
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-class BufferedWriter {
-	constexpr static idx_t BUFFER_SIZE = 4096 * 4;
-
+class CopyToFunctionGlobalState : public GlobalSinkState {
 public:
-	BufferedWriter(string &path) : pos(0) {
-		to_csv.open(path);
-		if (to_csv.fail()) {
-			throw IOException("Could not open CSV file");
-		}
+	explicit CopyToFunctionGlobalState(unique_ptr<GlobalFunctionData> global_state)
+	    : rows_copied(0), last_file_offset(0), global_state(std::move(global_state)) {
 	}
+	mutex lock;
+	idx_t rows_copied;
+	idx_t last_file_offset;
+	unique_ptr<GlobalFunctionData> global_state;
 
-	void Flush() {
-		if (pos > 0) {
-			to_csv.write(buffer, pos);
-			pos = 0;
-		}
-	}
-
-	void Close() {
-		Flush();
-		to_csv.close();
-	}
-
-	void Write(const char *buf, idx_t len) {
-		if (len >= BUFFER_SIZE) {
-			Flush();
-			to_csv.write(buf, len);
-			return;
-		}
-		if (pos + len > BUFFER_SIZE) {
-			Flush();
-		}
-		memcpy(buffer + pos, buf, len);
-		pos += len;
-	}
-
-	void Write(string &value) {
-		Write(value.c_str(), value.size());
-	}
-
-private:
-	char buffer[BUFFER_SIZE];
-	idx_t pos = 0;
-
-	ofstream to_csv;
+	//! shared state for HivePartitionedColumnData
+	shared_ptr<GlobalHivePartitionState> partition_state;
 };
 
-string AddEscapes(string &to_be_escaped, string escape, string val) {
-	idx_t i = 0;
-	string new_val = "";
-	idx_t found = val.find(to_be_escaped);
+class CopyToFunctionLocalState : public LocalSinkState {
+public:
+	explicit CopyToFunctionLocalState(unique_ptr<LocalFunctionData> local_state)
+	    : local_state(std::move(local_state)), writer_offset(0) {
+	}
+	unique_ptr<GlobalFunctionData> global_state;
+	unique_ptr<LocalFunctionData> local_state;
 
-	while (found != string::npos) {
-		while (i < found) {
-			new_val += val[i];
-			i++;
-		}
-		new_val += escape;
-		found = val.find(to_be_escaped, found + escape.length());
+	//! Buffers the tuples in partitions before writing
+	unique_ptr<HivePartitionedColumnData> part_buffer;
+	unique_ptr<PartitionedColumnDataAppendState> part_buffer_append_state;
+
+	idx_t writer_offset;
+};
+
+//===--------------------------------------------------------------------===//
+// Sink
+//===--------------------------------------------------------------------===//
+
+void PhysicalCopyToFile::MoveTmpFile(ClientContext &context, const string &tmp_file_path) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto file_path = tmp_file_path.substr(0, tmp_file_path.length() - 4);
+	if (fs.FileExists(file_path)) {
+		fs.RemoveFile(file_path);
 	}
-	while (i < val.length()) {
-		new_val += val[i];
-		i++;
-	}
-	return new_val;
+	fs.MoveFile(tmp_file_path, file_path);
 }
 
-static void WriteQuotedString(BufferedWriter &writer, string_t str_value, string &delimiter, string &quote,
-                              string &escape, string &null_str, bool write_quoted) {
-	// used for adding escapes
-	bool add_escapes = false;
-	auto str_data = str_value.GetData();
-	string new_val(str_data, str_value.GetSize());
+PhysicalCopyToFile::PhysicalCopyToFile(vector<LogicalType> types, CopyFunction function_p,
+                                       unique_ptr<FunctionData> bind_data, idx_t estimated_cardinality)
+    : PhysicalOperator(PhysicalOperatorType::COPY_TO_FILE, std::move(types), estimated_cardinality),
+      function(std::move(function_p)), bind_data(std::move(bind_data)), parallel(false) {
+}
 
-	// check for \n, \r, \n\r in string
-	if (!write_quoted) {
-		for (idx_t i = 0; i < str_value.GetSize(); i++) {
-			if (str_data[i] == '\n' || str_data[i] == '\r') {
-				// newline, write a quoted string
-				write_quoted = true;
-			}
-		}
+SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
+	auto &g = input.global_state.Cast<CopyToFunctionGlobalState>();
+	auto &l = input.local_state.Cast<CopyToFunctionLocalState>();
+
+	if (partition_output) {
+		l.part_buffer->Append(*l.part_buffer_append_state, chunk);
+		return SinkResultType::NEED_MORE_INPUT;
 	}
 
-	// check if value is null string
-	if (!write_quoted) {
-		if (new_val == null_str) {
-			write_quoted = true;
-		}
+	{
+		lock_guard<mutex> glock(g.lock);
+		g.rows_copied += chunk.size();
 	}
+	function.copy_to_sink(context, *bind_data, per_thread_output ? *l.global_state : *g.global_state, *l.local_state,
+	                      chunk);
+	return SinkResultType::NEED_MORE_INPUT;
+}
 
-	// check for delimiter
-	if (!write_quoted) {
-		if (new_val.find(delimiter) != string::npos) {
-			write_quoted = true;
-		}
-	}
-
-	// check for quote
-	if (new_val.find(quote) != string::npos) {
-		write_quoted = true;
-		add_escapes = true;
-	}
-
-	// check for escapes in quoted string
-	if (write_quoted && !add_escapes) {
-		if (new_val.find(escape) != string::npos) {
-			add_escapes = true;
-		}
-	}
-
-	if (add_escapes) {
-		new_val = AddEscapes(escape, escape, new_val);
-		// also escape quotes
-		if (escape != quote) {
-			new_val = AddEscapes(quote, escape, new_val);
-		}
-	}
-
-	if (!write_quoted) {
-		writer.Write(new_val);
-	} else {
-		writer.Write(quote);
-		writer.Write(new_val);
-		writer.Write(quote);
+static void CreateDir(const string &dir_path, FileSystem &fs) {
+	if (!fs.DirectoryExists(dir_path)) {
+		fs.CreateDirectory(dir_path);
 	}
 }
 
-void PhysicalCopyToFile::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state,
-                                          SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	auto &info = *this->info;
-	idx_t total = 0;
+static string CreateDirRecursive(const vector<idx_t> &cols, const vector<string> &names, const vector<Value> &values,
+                                 string path, FileSystem &fs) {
+	CreateDir(path, fs);
 
-	string newline = "\n";
-	BufferedWriter writer(info.file_path);
-	if (info.header) {
-		// write the header line
-		for (idx_t i = 0; i < names.size(); i++) {
-			if (i != 0) {
-				writer.Write(info.delimiter);
-			}
-			WriteQuotedString(writer, names[i].c_str(), info.delimiter, info.quote, info.escape, info.null_str, false);
-		}
-		writer.Write(newline);
+	for (idx_t i = 0; i < cols.size(); i++) {
+		const auto &partition_col_name = names[cols[i]];
+		const auto &partition_value = values[i];
+		string p_dir = partition_col_name + "=" + partition_value.ToString();
+		path = fs.JoinPath(path, p_dir);
+		CreateDir(path, fs);
 	}
-	// create a chunk with VARCHAR columns
-	vector<TypeId> types;
-	for (idx_t col_idx = 0; col_idx < state->child_chunk.column_count(); col_idx++) {
-		types.push_back(TypeId::VARCHAR);
-	}
-	DataChunk cast_chunk;
-	cast_chunk.Initialize(types);
 
-	while (true) {
-		children[0]->GetChunk(context, state->child_chunk, state->child_state.get());
-		if (state->child_chunk.size() == 0) {
-			break;
-		}
-		// cast the columns of the chunk to varchar
-		cast_chunk.SetCardinality(state->child_chunk);
-		for (idx_t col_idx = 0; col_idx < state->child_chunk.column_count(); col_idx++) {
-			if (sql_types[col_idx].id == SQLTypeId::VARCHAR) {
-				// VARCHAR, just create a reference
-				cast_chunk.data[col_idx].Reference(state->child_chunk.data[col_idx]);
-			} else {
-				// non varchar column, perform the cast
-				VectorOperations::Cast(state->child_chunk.data[col_idx], cast_chunk.data[col_idx], sql_types[col_idx],
-				                       SQLType::VARCHAR, cast_chunk.size());
-			}
-		}
-		cast_chunk.Normalify();
-		// now loop over the vectors and output the values
-		for (idx_t i = 0; i < cast_chunk.size(); i++) {
-			// write values
-			for (idx_t col_idx = 0; col_idx < state->child_chunk.column_count(); col_idx++) {
-				if (col_idx != 0) {
-					writer.Write(info.delimiter);
-				}
-				if (FlatVector::IsNull(cast_chunk.data[col_idx], i)) {
-					// write null value
-					writer.Write(info.null_str);
-					continue;
-				}
+	return path;
+}
 
-				// non-null value, fetch the string value from the cast chunk
-				auto str_data = FlatVector::GetData<string_t>(cast_chunk.data[col_idx]);
-				auto str_value = str_data[i];
-				WriteQuotedString(writer, str_value, info.delimiter, info.quote, info.escape, info.null_str,
-				                  info.force_quote[col_idx]);
+SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
+	auto &g = input.global_state.Cast<CopyToFunctionGlobalState>();
+	auto &l = input.local_state.Cast<CopyToFunctionLocalState>();
+
+	if (partition_output) {
+		auto &fs = FileSystem::GetFileSystem(context.client);
+		l.part_buffer->FlushAppendState(*l.part_buffer_append_state);
+		auto &partitions = l.part_buffer->GetPartitions();
+		auto partition_key_map = l.part_buffer->GetReverseMap();
+
+		string trimmed_path = file_path;
+		StringUtil::RTrim(trimmed_path, fs.PathSeparator(trimmed_path));
+
+		for (idx_t i = 0; i < partitions.size(); i++) {
+			string hive_path =
+			    CreateDirRecursive(partition_columns, names, partition_key_map[i]->values, trimmed_path, fs);
+			string full_path(filename_pattern.CreateFilename(fs, hive_path, function.extension, l.writer_offset));
+			if (fs.FileExists(full_path) && !overwrite_or_ignore) {
+				throw IOException("failed to create " + full_path +
+				                  ", file exists! Enable OVERWRITE_OR_IGNORE option to force writing");
 			}
-			writer.Write(newline);
+			// Create a writer for the current file
+			auto fun_data_global = function.copy_to_initialize_global(context.client, *bind_data, full_path);
+			auto fun_data_local = function.copy_to_initialize_local(context, *bind_data);
+
+			for (auto &chunk : partitions[i]->Chunks()) {
+				function.copy_to_sink(context, *bind_data, *fun_data_global, *fun_data_local, chunk);
+			}
+
+			function.copy_to_combine(context, *bind_data, *fun_data_global, *fun_data_local);
+			function.copy_to_finalize(context.client, *bind_data, *fun_data_global);
 		}
-		total += cast_chunk.size();
+
+		return SinkCombineResultType::FINISHED;
 	}
-	writer.Close();
+
+	if (function.copy_to_combine) {
+		function.copy_to_combine(context, *bind_data, per_thread_output ? *l.global_state : *g.global_state,
+		                         *l.local_state);
+
+		if (per_thread_output) {
+			function.copy_to_finalize(context.client, *bind_data, *l.global_state);
+		}
+	}
+
+	return SinkCombineResultType::FINISHED;
+}
+
+SinkFinalizeType PhysicalCopyToFile::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+                                              OperatorSinkFinalizeInput &input) const {
+	auto &gstate = input.global_state.Cast<CopyToFunctionGlobalState>();
+	if (per_thread_output || partition_output) {
+		// already happened in combine
+		return SinkFinalizeType::READY;
+	}
+	if (function.copy_to_finalize) {
+		function.copy_to_finalize(context, *bind_data, *gstate.global_state);
+
+		if (use_tmp_file) {
+			D_ASSERT(!per_thread_output); // FIXME
+			D_ASSERT(!partition_output);  // FIXME
+			MoveTmpFile(context, file_path);
+		}
+	}
+	return SinkFinalizeType::READY;
+}
+
+unique_ptr<LocalSinkState> PhysicalCopyToFile::GetLocalSinkState(ExecutionContext &context) const {
+	if (partition_output) {
+		auto state = make_uniq<CopyToFunctionLocalState>(nullptr);
+		{
+			auto &g = sink_state->Cast<CopyToFunctionGlobalState>();
+			lock_guard<mutex> glock(g.lock);
+			state->writer_offset = g.last_file_offset++;
+
+			state->part_buffer = make_uniq<HivePartitionedColumnData>(context.client, expected_types, partition_columns,
+			                                                          g.partition_state);
+			state->part_buffer_append_state = make_uniq<PartitionedColumnDataAppendState>();
+			state->part_buffer->InitializeAppendState(*state->part_buffer_append_state);
+		}
+		return std::move(state);
+	}
+	auto res = make_uniq<CopyToFunctionLocalState>(function.copy_to_initialize_local(context, *bind_data));
+	if (per_thread_output) {
+		idx_t this_file_offset;
+		{
+			auto &g = sink_state->Cast<CopyToFunctionGlobalState>();
+			lock_guard<mutex> glock(g.lock);
+			this_file_offset = g.last_file_offset++;
+		}
+		auto &fs = FileSystem::GetFileSystem(context.client);
+		string output_path(filename_pattern.CreateFilename(fs, file_path, function.extension, this_file_offset));
+		if (fs.FileExists(output_path) && !overwrite_or_ignore) {
+			throw IOException("%s exists! Enable OVERWRITE_OR_IGNORE option to force writing", output_path);
+		}
+		res->global_state = function.copy_to_initialize_global(context.client, *bind_data, output_path);
+	}
+	return std::move(res);
+}
+
+unique_ptr<GlobalSinkState> PhysicalCopyToFile::GetGlobalSinkState(ClientContext &context) const {
+
+	if (partition_output || per_thread_output) {
+		auto &fs = FileSystem::GetFileSystem(context);
+
+		if (fs.FileExists(file_path) && !overwrite_or_ignore) {
+			throw IOException("%s exists! Enable OVERWRITE_OR_IGNORE option to force writing", file_path);
+		}
+		if (!fs.DirectoryExists(file_path)) {
+			fs.CreateDirectory(file_path);
+		} else if (!overwrite_or_ignore) {
+			idx_t n_files = 0;
+			fs.ListFiles(file_path, [&n_files](const string &path, bool) { n_files++; });
+			if (n_files > 0) {
+				throw IOException("Directory %s is not empty! Enable OVERWRITE_OR_IGNORE option to force writing",
+				                  file_path);
+			}
+		}
+
+		auto state = make_uniq<CopyToFunctionGlobalState>(nullptr);
+
+		if (partition_output) {
+			state->partition_state = make_shared<GlobalHivePartitionState>();
+		}
+
+		return std::move(state);
+	}
+
+	return make_uniq<CopyToFunctionGlobalState>(function.copy_to_initialize_global(context, *bind_data, file_path));
+}
+
+//===--------------------------------------------------------------------===//
+// Source
+//===--------------------------------------------------------------------===//
+
+SourceResultType PhysicalCopyToFile::GetData(ExecutionContext &context, DataChunk &chunk,
+                                             OperatorSourceInput &input) const {
+	auto &g = sink_state->Cast<CopyToFunctionGlobalState>();
 
 	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(total));
+	chunk.SetValue(0, 0, Value::BIGINT(g.rows_copied));
 
-	state->finished = true;
+	return SourceResultType::FINISHED;
 }
+
+} // namespace duckdb

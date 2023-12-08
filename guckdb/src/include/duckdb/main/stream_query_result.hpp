@@ -8,37 +8,50 @@
 
 #pragma once
 
+#include "duckdb/common/winapi.hpp"
 #include "duckdb/main/query_result.hpp"
 
 namespace duckdb {
 
 class ClientContext;
+class ClientContextLock;
+class Executor;
 class MaterializedQueryResult;
+class PreparedStatementData;
 
 class StreamQueryResult : public QueryResult {
+	friend class ClientContext;
+
+public:
+	static constexpr const QueryResultType TYPE = QueryResultType::STREAM_RESULT;
+
 public:
 	//! Create a successful StreamQueryResult. StreamQueryResults should always be successful initially (it makes no
 	//! sense to stream an error).
-	StreamQueryResult(StatementType statement_type, ClientContext &context, vector<SQLType> sql_types,
-	                  vector<TypeId> types, vector<string> names);
-	~StreamQueryResult() override;
+	DUCKDB_API StreamQueryResult(StatementType statement_type, StatementProperties properties,
+	                             shared_ptr<ClientContext> context, vector<LogicalType> types, vector<string> names);
+	DUCKDB_API ~StreamQueryResult() override;
 
-	//! Fetches a DataChunk from the query result. Returns an empty chunk if the result is empty, or nullptr on error.
-	unique_ptr<DataChunk> Fetch() override;
+public:
+	//! Fetches a DataChunk from the query result.
+	DUCKDB_API unique_ptr<DataChunk> FetchRaw() override;
 	//! Converts the QueryResult to a string
-	string ToString() override;
+	DUCKDB_API string ToString() override;
 	//! Materializes the query result and turns it into a materialized query result
-	unique_ptr<MaterializedQueryResult> Materialize();
+	DUCKDB_API unique_ptr<MaterializedQueryResult> Materialize();
+
+	DUCKDB_API bool IsOpen();
 
 	//! Closes the StreamQueryResult
-	void Close();
+	DUCKDB_API void Close();
 
-	//! Whether or not the StreamQueryResult is still open
-	bool is_open;
+	//! The client context this StreamQueryResult belongs to
+	shared_ptr<ClientContext> context;
 
 private:
-	//! The client context this StreamQueryResult belongs to
-	ClientContext &context;
+	unique_ptr<ClientContextLock> LockContext();
+	void CheckExecutableInternal(ClientContextLock &lock);
+	bool IsOpenInternal(ClientContextLock &lock);
 };
 
 } // namespace duckdb

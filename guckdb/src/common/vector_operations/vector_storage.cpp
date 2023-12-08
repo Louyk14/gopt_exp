@@ -4,12 +4,13 @@
 
 namespace duckdb {
 
-template <class T> static void CopyToStorageLoop(VectorData &vdata, idx_t count, data_ptr_t target) {
-	auto ldata = (T *)vdata.data;
+template <class T>
+static void CopyToStorageLoop(UnifiedVectorFormat &vdata, idx_t count, data_ptr_t target) {
+	auto ldata = UnifiedVectorFormat::GetData<T>(vdata);
 	auto result_data = (T *)target;
 	for (idx_t i = 0; i < count; i++) {
 		auto idx = vdata.sel->get_index(i);
-		if ((*vdata.nullmask)[idx]) {
+		if (!vdata.validity.RowIsValid(idx)) {
 			result_data[i] = NullValue<T>();
 		} else {
 			result_data[i] = ldata[idx];
@@ -21,83 +22,103 @@ void VectorOperations::WriteToStorage(Vector &source, idx_t count, data_ptr_t ta
 	if (count == 0) {
 		return;
 	}
-	VectorData vdata;
-	source.Orrify(count, vdata);
+	UnifiedVectorFormat vdata;
+	source.ToUnifiedFormat(count, vdata);
 
-	switch (source.type) {
-	case TypeId::BOOL:
-	case TypeId::INT8:
+	switch (source.GetType().InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
 		CopyToStorageLoop<int8_t>(vdata, count, target);
 		break;
-	case TypeId::INT16:
+	case PhysicalType::INT16:
 		CopyToStorageLoop<int16_t>(vdata, count, target);
 		break;
-	case TypeId::INT32:
+	case PhysicalType::INT32:
 		CopyToStorageLoop<int32_t>(vdata, count, target);
 		break;
-	case TypeId::INT64:
+	case PhysicalType::INT64:
 		CopyToStorageLoop<int64_t>(vdata, count, target);
 		break;
-	case TypeId::HASH:
-		CopyToStorageLoop<hash_t>(vdata, count, target);
+	case PhysicalType::UINT8:
+		CopyToStorageLoop<uint8_t>(vdata, count, target);
 		break;
-	case TypeId::POINTER:
-		CopyToStorageLoop<uintptr_t>(vdata, count, target);
+	case PhysicalType::UINT16:
+		CopyToStorageLoop<uint16_t>(vdata, count, target);
 		break;
-	case TypeId::FLOAT:
+	case PhysicalType::UINT32:
+		CopyToStorageLoop<uint32_t>(vdata, count, target);
+		break;
+	case PhysicalType::UINT64:
+		CopyToStorageLoop<uint64_t>(vdata, count, target);
+		break;
+	case PhysicalType::INT128:
+		CopyToStorageLoop<hugeint_t>(vdata, count, target);
+		break;
+	case PhysicalType::FLOAT:
 		CopyToStorageLoop<float>(vdata, count, target);
 		break;
-	case TypeId::DOUBLE:
+	case PhysicalType::DOUBLE:
 		CopyToStorageLoop<double>(vdata, count, target);
 		break;
+	case PhysicalType::INTERVAL:
+		CopyToStorageLoop<interval_t>(vdata, count, target);
+		break;
 	default:
-		throw NotImplementedException("Unimplemented type for CopyToStorage");
+		throw NotImplementedException("Unimplemented type for WriteToStorage");
 	}
 }
 
-template <class T> static void ReadFromStorageLoop(data_ptr_t source, idx_t count, Vector &result) {
+template <class T>
+static void ReadFromStorageLoop(data_ptr_t source, idx_t count, Vector &result) {
 	auto ldata = (T *)source;
 	auto result_data = FlatVector::GetData<T>(result);
-	auto &nullmask = FlatVector::Nullmask(result);
 	for (idx_t i = 0; i < count; i++) {
-		if (IsNullValue<T>(ldata[i])) {
-			nullmask[i] = true;
-		} else {
-			result_data[i] = ldata[i];
-		}
+		result_data[i] = ldata[i];
 	}
 }
 
 void VectorOperations::ReadFromStorage(data_ptr_t source, idx_t count, Vector &result) {
-	result.vector_type = VectorType::FLAT_VECTOR;
-	switch (result.type) {
-	case TypeId::BOOL:
-	case TypeId::INT8:
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	switch (result.GetType().InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
 		ReadFromStorageLoop<int8_t>(source, count, result);
 		break;
-	case TypeId::INT16:
+	case PhysicalType::INT16:
 		ReadFromStorageLoop<int16_t>(source, count, result);
 		break;
-	case TypeId::INT32:
+	case PhysicalType::INT32:
 		ReadFromStorageLoop<int32_t>(source, count, result);
 		break;
-	case TypeId::INT64:
+	case PhysicalType::INT64:
 		ReadFromStorageLoop<int64_t>(source, count, result);
 		break;
-	case TypeId::HASH:
-		ReadFromStorageLoop<hash_t>(source, count, result);
+	case PhysicalType::UINT8:
+		ReadFromStorageLoop<uint8_t>(source, count, result);
 		break;
-	case TypeId::POINTER:
-		ReadFromStorageLoop<uintptr_t>(source, count, result);
+	case PhysicalType::UINT16:
+		ReadFromStorageLoop<uint16_t>(source, count, result);
 		break;
-	case TypeId::FLOAT:
+	case PhysicalType::UINT32:
+		ReadFromStorageLoop<uint32_t>(source, count, result);
+		break;
+	case PhysicalType::UINT64:
+		ReadFromStorageLoop<uint64_t>(source, count, result);
+		break;
+	case PhysicalType::INT128:
+		ReadFromStorageLoop<hugeint_t>(source, count, result);
+		break;
+	case PhysicalType::FLOAT:
 		ReadFromStorageLoop<float>(source, count, result);
 		break;
-	case TypeId::DOUBLE:
+	case PhysicalType::DOUBLE:
 		ReadFromStorageLoop<double>(source, count, result);
 		break;
+	case PhysicalType::INTERVAL:
+		ReadFromStorageLoop<interval_t>(source, count, result);
+		break;
 	default:
-		throw NotImplementedException("Unimplemented type for CopyToStorage");
+		throw NotImplementedException("Unimplemented type for ReadFromStorage");
 	}
 }
 

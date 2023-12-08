@@ -1,503 +1,1011 @@
 #include "duckdb/execution/operator/join/physical_sip_join.hpp"
 
 #include "duckdb/common/vector_operations/vector_operations.hpp"
-#include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/rai.hpp"
-#include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/function/aggregate/distributive_functions.hpp"
+#include "duckdb/function/function_binder.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/query_profiler.hpp"
+#include "duckdb/parallel/base_pipeline_event.hpp"
+#include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parallel/thread_context.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
-
-#include <iostream>
-
-using namespace duckdb;
-using namespace std;
-
-class PhysicalSIPJoinState : public PhysicalComparisonJoinState {
-public:
-	PhysicalSIPJoinState(PhysicalOperator *left, PhysicalOperator *right, vector<JoinCondition> &conditions)
-	    : PhysicalComparisonJoinState(left, right, conditions), initialized(false) {
-	}
-
-	bool initialized;
-	DataChunk cached_chunk;
-	DataChunk join_keys;
-	// state for SHJoin
-	unique_ptr<SIPHashTable::SIPScanStructure> scan_structure;
-};
-
-PhysicalSIPJoin::PhysicalSIPJoin(ClientContext &context, LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                 unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
-                                 vector<idx_t> &left_projection_map, vector<idx_t> &right_projection_map)
-    : PhysicalComparisonJoin(op, PhysicalOperatorType::SIP_JOIN, move(cond), join_type),
-      right_projection_map(right_projection_map) {
-	children.push_back(move(left));
-	children.push_back(move(right));
-
-	assert(left_projection_map.size() == 0);
-
-	hash_table =
-	    make_unique<SIPHashTable>(BufferManager::GetBufferManager(context), conditions,
-	                              LogicalOperator::MapTypes(children[1]->GetTypes(), right_projection_map), type);
-}
-
-void PhysicalSIPJoin::InitializeAList() {
-	auto &rai_info = conditions[0].rais[0];
-	// determine the alist for usage
-	switch (rai_info->rai_type) {
-	case RAIType::SELF:
-	case RAIType::EDGE_SOURCE: {
-		rai_info->compact_list = rai_info->forward ? &rai_info->rai->alist->compact_forward_list
-		                                           : &rai_info->rai->alist->compact_backward_list;
-		break;
-	}
-	case RAIType::EDGE_TARGET: {
-		if (rai_info->rai->rai_direction == RAIDirection::UNDIRECTED) {
-			rai_info->compact_list = &rai_info->rai->alist->compact_backward_list;
-		} else {
-			rai_info->compact_list = nullptr;
-		}
-		break;
-	}
-	default:
-		rai_info->compact_list = nullptr;
-		break;
-	}
-}
-
-void PhysicalSIPJoin::ProbeHashTable(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_) {
-	auto state = reinterpret_cast<PhysicalSIPJoinState *>(state_);
-	if (state->child_chunk.size() > 0 && state->scan_structure) {
-		// still have elements remaining from the previous probe (i.e. we got
-		// >1024 elements in the previous probe)
-		state->scan_structure->Next(state->join_keys, state->child_chunk, chunk);
-		if (chunk.size() > 0) {
-			return;
-		}
-		state->scan_structure = nullptr;
-	}
-
-	// probe the HT
-	do {
-		// fetch the chunk from the left side
-		children[0]->GetChunk(context, state->child_chunk, state->child_state.get());
-		if (state->child_chunk.size() == 0) {
-			return;
-		}
-		// remove any selection vectors
-		if (hash_table->size() == 0) {
-			// empty hash table, special case
-			if (hash_table->join_type == JoinType::ANTI) {
-				// anti join with empty hash table, NOP join
-				// return the input
-				assert(chunk.column_count() == state->child_chunk.column_count());
-				chunk.Reference(state->child_chunk);
-				return;
-			} else if (hash_table->join_type == JoinType::MARK) {
-				// MARK join with empty hash table
-				assert(hash_table->join_type == JoinType::MARK);
-				assert(chunk.column_count() == state->child_chunk.column_count() + 1);
-				auto &result_vector = chunk.data.back();
-				assert(result_vector.type == TypeId::BOOL);
-				// for every data vector, we just reference the child chunk
-				chunk.SetCardinality(state->child_chunk);
-				for (idx_t i = 0; i < state->child_chunk.column_count(); i++) {
-					chunk.data[i].Reference(state->child_chunk.data[i]);
-				}
-				// for the MARK vector:
-				// if the HT has no NULL values (i.e. empty result set), return a vector that has false for every input
-				// entry if the HT has NULL values (i.e. result set had values, but all were NULL), return a vector that
-				// has NULL for every input entry
-				if (!hash_table->has_null) {
-					auto bool_result = FlatVector::GetData<bool>(result_vector);
-					for (idx_t i = 0; i < chunk.size(); i++) {
-						bool_result[i] = false;
-					}
-				} else {
-					FlatVector::Nullmask(result_vector).set();
-				}
-				return;
-			} else if (hash_table->join_type == JoinType::LEFT || hash_table->join_type == JoinType::OUTER ||
-			           hash_table->join_type == JoinType::SINGLE) {
-				// LEFT/FULL OUTER/SINGLE join and build side is empty
-				// for the LHS we reference the data
-				chunk.SetCardinality(state->child_chunk.size());
-				for (idx_t i = 0; i < state->child_chunk.column_count(); i++) {
-					chunk.data[i].Reference(state->child_chunk.data[i]);
-				}
-				// for the RHS
-				for (idx_t k = state->child_chunk.column_count(); k < chunk.column_count(); k++) {
-					chunk.data[k].vector_type = VectorType::CONSTANT_VECTOR;
-					ConstantVector::SetNull(chunk.data[k], true);
-				}
-				return;
-			}
-		}
-		// resolve the join keys for the left chunk
-		state->lhs_executor.Execute(state->child_chunk, state->join_keys);
-
-		// perform the actual probe
-		state->scan_structure = hash_table->Probe(state->join_keys);
-		state->scan_structure->Next(state->join_keys, state->child_chunk, chunk);
-	} while (chunk.size() == 0);
-}
-
-void PhysicalSIPJoin::PassBitMaskFilter() {
-	// actually do the pushdown
-	auto &rai_info = conditions[0].rais[0];
-	children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
-	if (rai_info->passing_tables[1] != 0) {
-		children[0]->PushdownZoneFilter(rai_info->passing_tables[1], rai_info->extra_row_bitmask,
-		                                rai_info->extra_zone_bitmask);
-	}
-}
-
-void PhysicalSIPJoin::PerformSHJoin(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_) {
-	auto state = reinterpret_cast<PhysicalSIPJoinState *>(state_);
-	do {
-		ProbeHashTable(context, chunk, state);
-#if STANDARD_VECTOR_SIZE >= 128
-		if (chunk.size() == 0) {
-			if (state->cached_chunk.size() > 0) {
-				// finished probing but cached data remains, return cached chunk
-				chunk.Reference(state->cached_chunk);
-				state->cached_chunk.Reset();
-			}
-			return;
-		} else if (chunk.size() < 64) {
-			// small chunk: add it to chunk cache and continue
-			state->cached_chunk.Append(chunk);
-			if (state->cached_chunk.size() >= (STANDARD_VECTOR_SIZE - 64)) {
-				// chunk cache full: return it
-				chunk.Reference(state->cached_chunk);
-				state->cached_chunk.Reset();
-				return;
-			} else {
-				// chunk cache not full: probe again
-				chunk.Reset();
-			}
-		} else {
-			return;
-		}
-#else
-		return;
-#endif
-	} while (true);
-}
-
-void PhysicalSIPJoin::GetChunkInternal(ClientContext &context, DataChunk &chunk, PhysicalOperatorState *state_,
-                                       SelectionVector *sel, Vector *rid_vector, DataChunk *rai_chunk) {
-	auto state = reinterpret_cast<PhysicalSIPJoinState *>(state_);
-	if (!state->initialized) {
-		state->cached_chunk.Initialize(types);
-
-		// build the HT
-		auto right_state = children[1]->GetOperatorState();
-		auto right_types = children[1]->GetTypes();
-
-		DataChunk right_chunk, build_chunk;
-		right_chunk.Initialize(right_types);
-
-		if (right_projection_map.size() > 0) {
-			build_chunk.InitializeEmpty(hash_table->build_types);
-		}
-
-		state->join_keys.InitializeEmpty(hash_table->condition_types);
-		auto rai_info = conditions[0].rais[0].get();
-		// append ht blocks
-		while (true) {
-			children[1]->GetChunk(context, right_chunk, right_state.get());
-			if (right_chunk.size() == 0) {
-				break;
-			}
-			state->rhs_executor.Execute(right_chunk, state->join_keys);
-			if (right_projection_map.size() > 0) {
-				build_chunk.Reset();
-				build_chunk.SetCardinality(right_chunk);
-				for (idx_t i = 0; i < right_projection_map.size(); i++) {
-					build_chunk.data[i].Reference(right_chunk.data[right_projection_map[i]]);
-				}
-				hash_table->Build(state->join_keys, build_chunk);
-			} else {
-				hash_table->Build(state->join_keys, right_chunk);
-			}
-		}
-		hash_table->Finalize();
-
-		// estimate distinct build side keys as non empty hash slots num, assume no conflicts in each slot.
-		idx_t non_empty_hash_slots = 0;
-		auto pointers = (data_ptr_t *)hash_table->hash_map->node->buffer;
-		for (idx_t i = 0; i < hash_table->bitmask; i++) {
-			non_empty_hash_slots += (pointers[i] != nullptr);
-		}
-
-		// estimate semi-join filter passing ratio
-		double avg_degree = rai_info->GetAverageDegree(rai_info->rai_type, rai_info->forward);
-		auto probe_table_card = (double)rai_info->left_cardinalities[0];
-		auto filter_passing_ratio = non_empty_hash_slots * avg_degree / probe_table_card;
-		if (filter_passing_ratio <= SIPJoin::SHJ_MAGIC) {
-			// if passing ratio is low, generate and pass semi-join filter
-			// after the right tree is finished, the left tree is initialized with rai, and the rowmask of tablescan is updated
-			hash_table->GenerateBitmaskFilter(*rai_info, rai_info->compact_list != nullptr);
-			PassBitMaskFilter();
-		}
-		state->initialized = true;
-
-		if (hash_table->size() == 0 &&
-		    (hash_table->join_type == JoinType::INNER || hash_table->join_type == JoinType::SEMI)) {
-			// empty hash table with INNER or SEMI join means empty result set
-			return;
-		}
-	}
-
-	// perform SHJ
-	PerformSHJoin(context, chunk, state);
-}
-
-unique_ptr<PhysicalOperatorState> PhysicalSIPJoin::GetOperatorState() {
-	return make_unique<PhysicalSIPJoinState>(children[0].get(), children[1].get(), conditions);
-}
-
-string PhysicalSIPJoin::ExtraRenderInformation() const {
-	string extra_info;
-	extra_info = "SIP_JOIN[";
-	extra_info += JoinTypeToString(type);
-	extra_info += ", build: ";
-	extra_info +=
-	    to_string(right_projection_map.size() == 0 ? children[1]->GetTypes().size() : right_projection_map.size());
-
-	if (right_projection_map.empty()) {
-		extra_info += " empty ";
-	}
-	else {
-		extra_info += " ";
-		for (int i = 0; i < right_projection_map.size(); ++i) {
-			extra_info += to_string(right_projection_map[i]) + ",";
-		}
-	}
-
-	extra_info += "]\n";
-	for (auto &it : conditions) {
-		string op = ExpressionTypeToOperator(it.comparison);
-		BoundReferenceExpression* left = (BoundReferenceExpression*) it.left.get();
-		BoundReferenceExpression* right = (BoundReferenceExpression*) it.right.get();
-		extra_info += to_string(left->index) + op + to_string(right->index) + "--";
-		extra_info += it.left->GetName() + op + it.right->GetName() + "\n";
-	}
-
-	auto &rai_info = conditions[0].rais[0];
-	extra_info += rai_info->ToString() + "\n";
-	return extra_info;
-}
-
-
-string PhysicalSIPJoin::GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, duckdb::idx_t depth) const {
-	string join_str = AssignBlank(depth) + "\"sipJoin\": {\n";
-
-	string left_str = AssignBlank(++depth) + "\"left\": {\n";
-	string right_str = AssignBlank(depth) + "\"right\": {\n";
-
-	left_str += children[0]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
-	right_str += children[1]->GetSubstraitInfo(func_map, func_num, depth + 1) + AssignBlank(depth) + "},\n";
-
-	string type_str = AssignBlank(depth) + "\"type\": ";
-	type_str += "\"" + JoinTypeToString(this->type) + "\",\n";
-
-	string common_str = AssignBlank(depth) + "\"common\": {\n";
-	string emit_str = AssignBlank(++depth) + "\"emit\": {\n";
-	string output_mapping_str = AssignBlank(++depth) + "\"outputMapping\": ";
-
-	string select_right_str = "[\n";
-
-	++depth;
-
-	for (int i = 0; i < right_projection_map.size(); ++i) {
-		select_right_str += AssignBlank(depth) + to_string(right_projection_map[i]);
-		if (i != right_projection_map.size() - 1) {
-			select_right_str += ",\n";
-		}
-		else {
-			select_right_str += "\n";
-		}
-	}
-	select_right_str += AssignBlank(--depth) + "]";
-	output_mapping_str += select_right_str + "\n";
-	emit_str += output_mapping_str + AssignBlank(--depth) + "}\n";
-	common_str += emit_str + AssignBlank(--depth) + "},\n";
-
-	string condition_str = "";
-	string left_condition_str = AssignBlank(depth) + "\"leftKeys\": [\n";
-	string right_condition_str = AssignBlank(depth) + "\"rightKeys\": [\n";
-	string rai_index_str = AssignBlank(depth) + "\"raiIndex\": ";
-	string rai_name_str = AssignBlank(depth) + "\"raiName\": ";
-	string rai_type_str = AssignBlank(depth) + "\"raiType\": ";
-	string rai_forward_str = AssignBlank(depth) + "\"raiForward\": ";
-	string rai_vertex_id_str = AssignBlank(depth) + "\"raiVertexId\": ";
-
-	++depth;
-
-	for (int i = 0; i < conditions.size(); ++i) {
-		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
-		BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
-
-		left_condition_str += AssignBlank(depth) + "{\n";
-		left_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
-		left_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
-		left_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(lexp->index) + "\n";
-		left_condition_str += AssignBlank(--depth) + "}\n";
-		left_condition_str += AssignBlank(--depth) + "}\n";
-		left_condition_str += AssignBlank(--depth) + "}";
-
-		right_condition_str += AssignBlank(depth) + "{\n";
-		right_condition_str += AssignBlank(++depth) + "\"directReference\": {\n";
-		right_condition_str += AssignBlank(++depth) + "\"structField\": {\n";
-		right_condition_str += AssignBlank(++depth) + "\"field\": " + to_string(rexp->index) + "\n";
-		right_condition_str += AssignBlank(--depth) + "}\n";
-		right_condition_str += AssignBlank(--depth) + "}\n";
-		right_condition_str += AssignBlank(--depth) + "}";
-
-		if (i != conditions.size() - 1) {
-			left_condition_str += ",\n";
-			right_condition_str += ",\n";
-		}
-		else {
-			left_condition_str += "\n";
-			right_condition_str += "\n";
-		}
-
-		if (!conditions[i].rais.empty()) {
-			rai_index_str += to_string(i) + ",\n";
-			rai_name_str += "\"" + conditions[i].rais[0]->rai->name + "\",\n";
-			rai_type_str += "\"" + conditions[i].rais[0]->RAITypeToString() + "\",\n";
-			rai_forward_str += to_string(conditions[i].rais[0]->forward) + ",\n";
-			rai_vertex_id_str += to_string(conditions[i].rais[0]->vertex_id) + "\n";
-		}
-	}
-
-	--depth;
-
-	left_condition_str += AssignBlank(depth) + "],\n";
-	right_condition_str += AssignBlank(depth) + "],\n";
-
-	condition_str += left_condition_str + right_condition_str;
-	condition_str += rai_index_str + rai_name_str + rai_type_str + rai_forward_str
-	                 + rai_vertex_id_str;
-
-	join_str += left_str + right_str + type_str + common_str + condition_str + AssignBlank(--depth) + "}\n";
-
-	return join_str;
-}
-
-
-substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& tableid2name) const {
-	substrait::Rel* sip_join_rel = new substrait::Rel();
-	substrait::SIPJoinRel* sip_join = new substrait::SIPJoinRel();
-
-	sip_join->set_allocated_left(children[0]->ToSubstraitClass(tableid2name));
-	sip_join->set_allocated_right(children[1]->ToSubstraitClass(tableid2name));
-
-	substrait::RelCommon* common = new substrait::RelCommon();
-	substrait::RelCommon_Emit* emit = new substrait::RelCommon_Emit();
-
-	for (int i = 0; i < right_projection_map.size(); ++i) {
-		emit->add_output_mapping(right_projection_map[i]);
-	}
-
-	common->set_allocated_emit(emit);
-	sip_join->set_allocated_common(common);
-
-	sip_join->set_type(JoinTypeToSubstraitSIPJoinType(type));	
-
-	for (int i = 0; i < conditions.size(); ++i) {
-		BoundReferenceExpression* lexp = (BoundReferenceExpression*) conditions[i].left.get();
-		BoundReferenceExpression* rexp = (BoundReferenceExpression*) conditions[i].right.get();
-
-		substrait::Expression_FieldReference* field_reference_left = new substrait::Expression_FieldReference();
-		substrait::Expression_ReferenceSegment* direct_reference_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_variable_left = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* variable_name_left = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_type_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_type_left = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* type_left = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_index_left = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_StructField* field_variable_index_left = new substrait::Expression_ReferenceSegment_StructField();
-
-		field_variable_index_left->set_field(lexp->index);
-		child_variable_index_left->set_allocated_struct_field(field_variable_index_left);
-		string* type_left_str = new string(TypeIdToString(lexp->return_type));
-		type_left->set_allocated_string(type_left_str);
-		map_key_type_left->set_allocated_map_key(type_left);
-		map_key_type_left->set_allocated_child(child_variable_index_left);
-		child_variable_type_left->set_allocated_map_key(map_key_type_left);
-
-		int size_index_left = sip_join->left_keys_size();
-		*sip_join->add_left_keys() = *field_reference_left;
-		// sip_join->mutable_left_keys()->AddAllocated(field_reference_left);
-		delete field_reference_left;
-		string* string_val_left = new string(lexp->alias);
-		variable_name_left->set_allocated_string(string_val_left);
-		map_key_variable_left->set_allocated_map_key(variable_name_left);
-		map_key_variable_left->set_allocated_child(child_variable_type_left);
-		direct_reference_left->set_allocated_map_key(map_key_variable_left);
-		sip_join->mutable_left_keys(size_index_left)->set_allocated_direct_reference(direct_reference_left);
-
-
-		substrait::Expression_FieldReference* field_reference_right = new substrait::Expression_FieldReference();
-		substrait::Expression_ReferenceSegment* direct_reference_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_variable_right = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* variable_name_right = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_type_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_MapKey* map_key_type_right = new substrait::Expression_ReferenceSegment_MapKey();
-		substrait::Expression_Literal* type_right = new substrait::Expression_Literal();
-		substrait::Expression_ReferenceSegment* child_variable_index_right = new substrait::Expression_ReferenceSegment();
-		substrait::Expression_ReferenceSegment_StructField* field_variable_index_right = new substrait::Expression_ReferenceSegment_StructField();
-
-		field_variable_index_right->set_field(rexp->index);
-		child_variable_index_right->set_allocated_struct_field(field_variable_index_right);
-		string* type_right_str = new string(TypeIdToString(rexp->return_type));
-		type_right->set_allocated_string(type_right_str);
-		map_key_type_right->set_allocated_map_key(type_right);
-		map_key_type_right->set_allocated_child(child_variable_index_right);
-		child_variable_type_right->set_allocated_map_key(map_key_type_right);
-
-		int size_index_right = sip_join->right_keys_size();
-		*sip_join->add_right_keys() = *field_reference_right;
-		// sip_join->mutable_left_keys()->AddAllocated(field_reference_left);
-		delete field_reference_right;
-		string* string_val_right = new string(rexp->alias);
-		variable_name_right->set_allocated_string(string_val_right);
-		map_key_variable_right->set_allocated_map_key(variable_name_right);
-		map_key_variable_right->set_allocated_child(child_variable_type_right);
-		direct_reference_right->set_allocated_map_key(map_key_variable_right);
-		sip_join->mutable_right_keys(size_index_right)->set_allocated_direct_reference(direct_reference_right);
-
-
-		if (!conditions[i].rais.empty()) {
-			sip_join->set_rai_index(i);
-			sip_join->set_rai_name(conditions[i].rais[0]->rai->name);
-			sip_join->set_rai_type(conditions[i].rais[0]->RAITypeToString());
-			sip_join->set_rai_forward(conditions[i].rais[0]->forward);
-            if (conditions[i].rais[0]->RAITypeToString() != "SELF")
-			    sip_join->set_rai_vertex(conditions[i].rais[0]->vertex->name);
-
-			if (conditions[i].rais[0]->passing_tables[0] != 0)
-				sip_join->add_rai_passing_tables(tableid2name[conditions[i].rais[0]->passing_tables[0]]);
-			else
-				sip_join->add_rai_passing_tables("");
-
-			if (conditions[i].rais[0]->passing_tables[1] != 0)
-				sip_join->add_rai_passing_tables(tableid2name[conditions[i].rais[0]->passing_tables[1]]);
-			else
-				sip_join->add_rai_passing_tables("");
-
-			sip_join->add_rai_left_cardinalities(conditions[i].rais[0]->left_cardinalities[0]);
-			sip_join->add_rai_left_cardinalities(conditions[i].rais[0]->left_cardinalities[1]);
-			sip_join->set_rai_compact_list(conditions[i].rais[0]->compact_list != NULL);
-		}
-	}
-
-	for (int i = 0; i < types.size(); ++i)
-		sip_join->add_out_types(TypeIdToString(types[i]));
-
-	sip_join_rel->set_allocated_sip_join(sip_join);
-
-	return sip_join_rel;
-}
+#include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/storage_manager.hpp"
+
+namespace duckdb {
+
+    PhysicalSIPJoin::PhysicalSIPJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
+                                               unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
+                                               const vector<idx_t> &left_projection_map, const vector<idx_t> &right_projection_map_p,
+                                               vector<LogicalType> delim_types, idx_t estimated_cardinality)
+            : PhysicalComparisonJoin(op, PhysicalOperatorType::SIP_JOIN, std::move(cond), join_type, estimated_cardinality),
+              right_projection_map(right_projection_map_p), delim_types(std::move(delim_types)) {
+
+        children.push_back(std::move(left));
+        children.push_back(std::move(right));
+
+                D_ASSERT(left_projection_map.empty());
+        for (auto &condition : conditions) {
+            condition_types.push_back(condition.left->return_type);
+        }
+
+        // for ANTI, SEMI and MARK join, we only need to store the keys, so for these the build types are empty
+        if (join_type != JoinType::ANTI && join_type != JoinType::SEMI && join_type != JoinType::MARK) {
+            build_types = LogicalOperator::MapTypes(children[1]->GetTypes(), right_projection_map);
+        }
+    }
+
+
+//===--------------------------------------------------------------------===//
+// Sink
+//===--------------------------------------------------------------------===//
+    class SIPJoinGlobalSinkState : public GlobalSinkState {
+    public:
+        SIPJoinGlobalSinkState(const PhysicalSIPJoin &op, ClientContext &context_p)
+                : context(context_p), finalized(false), scanned_data(false), op(op) {
+            hash_table = op.InitializeHashTable(context);
+
+            // for perfect hash join
+            // perfect_join_executor = make_uniq<PerfectHashJoinExecutor>(op, *hash_table, op.perfect_join_statistics);
+            // for external hash join
+            external = ClientConfig::GetConfig(context).force_external;
+            // Set probe types
+            const auto &payload_types = op.children[0]->types;
+            probe_types.insert(probe_types.end(), op.condition_types.begin(), op.condition_types.end());
+            probe_types.insert(probe_types.end(), payload_types.begin(), payload_types.end());
+            probe_types.emplace_back(LogicalType::HASH);
+        }
+
+        void ScheduleFinalize(Pipeline &pipeline, Event &event);
+        void InitializeProbeSpill();
+
+    public:
+        ClientContext &context;
+        //! Global HT used by the join
+        unique_ptr<SIPHashTable> hash_table;
+        //! The perfect hash join executor (if any)
+        // unique_ptr<PerfectHashJoinExecutor> perfect_join_executor;
+        //! Whether or not the hash table has been finalized
+        bool finalized = false;
+
+        //! Whether we are doing an external join
+        bool external;
+
+        //! Hash tables built by each thread
+        mutex lock;
+        vector<unique_ptr<SIPHashTable>> local_hash_tables;
+
+        //! Excess probe data gathered during Sink
+        vector<LogicalType> probe_types;
+        unique_ptr<SIPHashTable::SIPProbeSpill> probe_spill;
+
+        //! Whether or not we have started scanning data using GetData
+        atomic<bool> scanned_data;
+
+        const PhysicalSIPJoin& op;
+    };
+
+    class SIPJoinLocalSinkState : public LocalSinkState {
+    public:
+        SIPJoinLocalSinkState(const PhysicalSIPJoin &op, ClientContext &context) : build_executor(context) {
+            auto &allocator = BufferAllocator::Get(context);
+            if (!op.right_projection_map.empty()) {
+                build_chunk.Initialize(allocator, op.build_types);
+            }
+            for (auto &cond : op.conditions) {
+                build_executor.AddExpression(*cond.right);
+            }
+            join_keys.Initialize(allocator, op.condition_types);
+
+            hash_table = op.InitializeHashTable(context);
+
+            hash_table->GetSinkCollection().InitializeAppendState(append_state);
+        }
+
+    public:
+        PartitionedTupleDataAppendState append_state;
+
+        DataChunk build_chunk;
+        DataChunk join_keys;
+        ExpressionExecutor build_executor;
+
+        //! Thread-local HT
+        unique_ptr<SIPHashTable> hash_table;
+    };
+
+    unique_ptr<SIPHashTable> PhysicalSIPJoin::InitializeHashTable(ClientContext &context) const {
+        auto result = make_uniq<SIPHashTable>(BufferManager::GetBufferManager(context), conditions,
+                                              build_types, join_type);
+        result->max_ht_size = double(0.6) * BufferManager::GetBufferManager(context).GetMaxMemory();
+        if (!delim_types.empty() && join_type == JoinType::MARK) {
+            // correlated MARK join
+            if (delim_types.size() + 1 == conditions.size()) {
+                // the correlated MARK join has one more condition than the amount of correlated columns
+                // this is the case in a correlated ANY() expression
+                // in this case we need to keep track of additional entries, namely:
+                // - (1) the total amount of elements per group
+                // - (2) the amount of non-null elements per group
+                // we need these to correctly deal with the cases of either:
+                // - (1) the group being empty [in which case the result is always false, even if the comparison is NULL]
+                // - (2) the group containing a NULL value [in which case FALSE becomes NULL]
+                auto &info = result->correlated_mark_join_info;
+
+                vector<LogicalType> payload_types;
+                vector<BoundAggregateExpression *> correlated_aggregates;
+                unique_ptr<BoundAggregateExpression> aggr;
+
+                // jury-rigging the GroupedAggregateHashTable
+                // we need a count_star and a count to get counts with and without NULLs
+
+                FunctionBinder function_binder(context);
+                aggr = function_binder.BindAggregateFunction(CountStarFun::GetFunction(), {}, nullptr,
+                                                             AggregateType::NON_DISTINCT);
+                correlated_aggregates.push_back(&*aggr);
+                payload_types.push_back(aggr->return_type);
+                info.correlated_aggregates.push_back(std::move(aggr));
+
+                auto count_fun = CountFun::GetFunction();
+                vector<unique_ptr<Expression>> children;
+                // this is a dummy but we need it to make the hash table understand whats going on
+                children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(count_fun.return_type, 0));
+                aggr = function_binder.BindAggregateFunction(count_fun, std::move(children), nullptr,
+                                                             AggregateType::NON_DISTINCT);
+                correlated_aggregates.push_back(&*aggr);
+                payload_types.push_back(aggr->return_type);
+                info.correlated_aggregates.push_back(std::move(aggr));
+
+                auto &allocator = BufferAllocator::Get(context);
+                info.correlated_counts = make_uniq<GroupedAggregateHashTable>(context, allocator, delim_types,
+                                                                              payload_types, correlated_aggregates);
+                info.correlated_types = delim_types;
+                info.group_chunk.Initialize(allocator, delim_types);
+                info.result_chunk.Initialize(allocator, payload_types);
+            }
+        }
+        return result;
+    }
+
+    unique_ptr<GlobalSinkState> PhysicalSIPJoin::GetGlobalSinkState(ClientContext &context) const {
+        return make_uniq<SIPJoinGlobalSinkState>(*this, context);
+    }
+
+    unique_ptr<LocalSinkState> PhysicalSIPJoin::GetLocalSinkState(ExecutionContext &context) const {
+        return make_uniq<SIPJoinLocalSinkState>(*this, context.client);
+    }
+
+    SinkResultType PhysicalSIPJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
+        auto &lstate = input.local_state.Cast<SIPJoinLocalSinkState>();
+
+        // resolve the join keys for the right chunk
+
+        // if (right_projection_map.size() > 0) {
+        //    lstate.build_chunk.InitializeEmpty(lstate.hash_table->build_types);
+        // }
+        // lstate.join_keys.InitializeEmpty(lstate.hash_table->condition_types);
+        lstate.build_executor.Execute(chunk, lstate.join_keys);
+
+        auto &rai_info = conditions[0].rais[0];
+        if (chunk.size() != 0) {
+            if (right_projection_map.size() > 0) {
+                lstate.build_chunk.Reset();
+                lstate.build_chunk.SetCardinality(chunk);
+                for (idx_t i = 0; i < right_projection_map.size(); ++i) {
+                    lstate.build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
+                }
+                lstate.hash_table->Build(lstate.append_state, lstate.join_keys, lstate.build_chunk);
+            }
+            else {
+                lstate.hash_table->Build(lstate.append_state, lstate.join_keys, chunk);
+            }
+        }
+
+        return SinkResultType::NEED_MORE_INPUT;
+    }
+
+    SinkCombineResultType PhysicalSIPJoin::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
+        auto &gstate = input.global_state.Cast<SIPJoinGlobalSinkState>();
+        auto &lstate = input.local_state.Cast<SIPJoinLocalSinkState>();
+        if (lstate.hash_table) {
+            lstate.hash_table->GetSinkCollection().FlushAppendState(lstate.append_state);
+            lock_guard<mutex> local_ht_lock(gstate.lock);
+            gstate.local_hash_tables.push_back(std::move(lstate.hash_table));
+        }
+        auto &client_profiler = QueryProfiler::Get(context.client);
+        context.thread.profiler.Flush(*this, lstate.build_executor, "build_executor", 1);
+        client_profiler.Flush(context.thread.profiler);
+
+        return SinkCombineResultType::FINISHED;
+    }
+
+    void PhysicalSIPJoin::InitializeAList() {
+        auto &rai_info = conditions[0].rais[0];
+        // determine the alist for usage
+        switch (rai_info->rai_type) {
+            case RAIType::SELF:
+            case RAIType::EDGE_SOURCE: {
+                rai_info->compact_list = rai_info->forward ? &rai_info->rai->alist->compact_forward_list
+                                                           : &rai_info->rai->alist->compact_backward_list;
+                break;
+            }
+            case RAIType::EDGE_TARGET: {
+                if (rai_info->rai->rai_direction == RAIDirection::UNDIRECTED) {
+                    rai_info->compact_list = &rai_info->rai->alist->compact_backward_list;
+                } else {
+                    rai_info->compact_list = nullptr;
+                }
+                break;
+            }
+            default:
+                rai_info->compact_list = nullptr;
+                break;
+        }
+    }
+
+    void PhysicalSIPJoin::PassBitMaskFilter() const {
+        // actually do the pushdown
+        auto &rai_info = conditions[0].rais[0];
+        children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
+        if (rai_info->passing_tables[1] != 0) {
+            children[0]->PushdownZoneFilter(rai_info->passing_tables[1], rai_info->extra_row_bitmask,
+                                            rai_info->extra_zone_bitmask);
+        }
+    }
+
+//===--------------------------------------------------------------------===//
+// Finalize
+//===--------------------------------------------------------------------===//
+    class SIPJoinFinalizeTask : public ExecutorTask {
+    public:
+        SIPJoinFinalizeTask(shared_ptr<Event> event_p, ClientContext &context, SIPJoinGlobalSinkState &sink_p,
+                                 idx_t chunk_idx_from_p, idx_t chunk_idx_to_p, bool parallel_p)
+                : ExecutorTask(context), event(std::move(event_p)), sink(sink_p), chunk_idx_from(chunk_idx_from_p),
+                  chunk_idx_to(chunk_idx_to_p), parallel(parallel_p) {
+        }
+
+        void PassBitMaskFilter() const {
+            // actually do the pushdown
+            auto &rai_info = sink.op.conditions[0].rais[0];
+            sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
+            if (rai_info->passing_tables[1] != 0) {
+                sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[1], rai_info->extra_row_bitmask,
+                                                rai_info->extra_zone_bitmask);
+            }
+        }
+
+        TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
+            sink.hash_table->Finalize(chunk_idx_from, chunk_idx_to, parallel);
+
+            idx_t non_empty_hash_slots = 0;
+            auto pointers = reinterpret_cast<data_ptr_t *>(sink.hash_table->hash_map.get());
+            for (idx_t i = 0; i < sink.hash_table->bitmask; ++i) {
+                non_empty_hash_slots += (pointers[i] != nullptr);
+            }
+
+            auto &rai_info = sink.op.conditions[0].rais[0];
+            // estimate semi-join filter passing ratio
+            double avg_degree = rai_info->GetAverageDegree(rai_info->rai_type, rai_info->forward);
+            auto probe_table_card = (double)rai_info->left_cardinalities[0];
+            auto filter_passing_ratio = non_empty_hash_slots * avg_degree / probe_table_card;
+            if (filter_passing_ratio <= 0.8) {
+                // if passing ratio is low, generate and pass semi-join filter
+                // after the right tree is finished, the left tree is initialized with rai, and the rowmask of tablescan is updated
+                sink.hash_table->GenerateBitmaskFilter(*rai_info, rai_info->compact_list != nullptr);
+                PassBitMaskFilter();
+            }
+
+            event->FinishTask();
+            return TaskExecutionResult::TASK_FINISHED;
+        }
+
+    private:
+        shared_ptr<Event> event;
+        SIPJoinGlobalSinkState &sink;
+        idx_t chunk_idx_from;
+        idx_t chunk_idx_to;
+        bool parallel;
+    };
+
+    class SIPJoinFinalizeEvent : public BasePipelineEvent {
+    public:
+        SIPJoinFinalizeEvent(Pipeline &pipeline_p, SIPJoinGlobalSinkState &sink)
+                : BasePipelineEvent(pipeline_p), sink(sink) {
+        }
+
+        SIPJoinGlobalSinkState &sink;
+
+    public:
+        void Schedule() override {
+            auto &context = pipeline->GetClientContext();
+
+            vector<shared_ptr<Task>> finalize_tasks;
+            auto &ht = *sink.hash_table;
+            const auto chunk_count = ht.GetDataCollection().ChunkCount();
+            const idx_t num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+            if (num_threads == 1 || (ht.Count() < PARALLEL_CONSTRUCT_THRESHOLD && !context.config.verify_parallelism)) {
+                // Single-threaded finalize
+                finalize_tasks.push_back(
+                        make_uniq<SIPJoinFinalizeTask>(shared_from_this(), context, sink, 0, chunk_count, false));
+            } else {
+                // Parallel finalize
+                auto chunks_per_thread = MaxValue<idx_t>((chunk_count + num_threads - 1) / num_threads, 1);
+
+                idx_t chunk_idx = 0;
+                for (idx_t thread_idx = 0; thread_idx < num_threads; thread_idx++) {
+                    auto chunk_idx_from = chunk_idx;
+                    auto chunk_idx_to = MinValue<idx_t>(chunk_idx_from + chunks_per_thread, chunk_count);
+                    finalize_tasks.push_back(make_uniq<SIPJoinFinalizeTask>(shared_from_this(), context, sink,
+                                                                                 chunk_idx_from, chunk_idx_to, true));
+                    chunk_idx = chunk_idx_to;
+                    if (chunk_idx == chunk_count) {
+                        break;
+                    }
+                }
+            }
+            SetTasks(std::move(finalize_tasks));
+        }
+
+        void FinishEvent() override {
+            sink.hash_table->GetDataCollection().VerifyEverythingPinned();
+            sink.hash_table->finalized = true;
+        }
+
+        static constexpr const idx_t PARALLEL_CONSTRUCT_THRESHOLD = 1048576;
+    };
+
+    void SIPJoinGlobalSinkState::ScheduleFinalize(Pipeline &pipeline, Event &event) {
+        if (hash_table->Count() == 0) {
+            hash_table->finalized = true;
+            return;
+        }
+        hash_table->InitializePointerTable();
+        auto new_event = make_shared<SIPJoinFinalizeEvent>(pipeline, *this);
+        event.InsertEvent(std::move(new_event));
+    }
+
+    void SIPJoinGlobalSinkState::InitializeProbeSpill() {
+        lock_guard<mutex> guard(lock);
+        if (!probe_spill) {
+            probe_spill = make_uniq<SIPHashTable::SIPProbeSpill>(*hash_table, context, probe_types);
+        }
+    }
+
+    class SIPJoinRepartitionTask : public ExecutorTask {
+    public:
+        SIPJoinRepartitionTask(shared_ptr<Event> event_p, ClientContext &context, SIPHashTable &global_ht,
+                                    SIPHashTable &local_ht)
+                : ExecutorTask(context), event(std::move(event_p)), global_ht(global_ht), local_ht(local_ht) {
+        }
+
+        TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
+            local_ht.Partition(global_ht);
+            event->FinishTask();
+            return TaskExecutionResult::TASK_FINISHED;
+        }
+
+    private:
+        shared_ptr<Event> event;
+
+        SIPHashTable &global_ht;
+        SIPHashTable &local_ht;
+    };
+
+    class SIPJoinPartitionEvent : public BasePipelineEvent {
+    public:
+        SIPJoinPartitionEvent(Pipeline &pipeline_p, SIPJoinGlobalSinkState &sink,
+                                   vector<unique_ptr<SIPHashTable>> &local_hts)
+                : BasePipelineEvent(pipeline_p), sink(sink), local_hts(local_hts) {
+        }
+
+        SIPJoinGlobalSinkState &sink;
+        vector<unique_ptr<SIPHashTable>> &local_hts;
+
+    public:
+        void Schedule() override {
+            auto &context = pipeline->GetClientContext();
+            vector<shared_ptr<Task>> partition_tasks;
+            partition_tasks.reserve(local_hts.size());
+            for (auto &local_ht : local_hts) {
+                partition_tasks.push_back(
+                        make_uniq<SIPJoinRepartitionTask>(shared_from_this(), context, *sink.hash_table, *local_ht));
+            }
+            SetTasks(std::move(partition_tasks));
+        }
+
+        void FinishEvent() override {
+            local_hts.clear();
+            sink.hash_table->PrepareExternalFinalize();
+            sink.ScheduleFinalize(*pipeline, *this);
+        }
+    };
+
+    SinkFinalizeType PhysicalSIPJoin::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+                                                    OperatorSinkFinalizeInput &input) const {
+        auto &sink = input.global_state.Cast<SIPJoinGlobalSinkState>();
+        auto &ht = *sink.hash_table;
+
+        sink.external = ht.RequiresExternalJoin(context.config, sink.local_hash_tables);
+        if (sink.external) {
+            // sink.perfect_join_executor.reset();
+            if (ht.RequiresPartitioning(context.config, sink.local_hash_tables)) {
+                auto new_event = make_shared<SIPJoinPartitionEvent>(pipeline, sink, sink.local_hash_tables);
+                event.InsertEvent(std::move(new_event));
+            } else {
+                for (auto &local_ht : sink.local_hash_tables) {
+                    ht.Merge(*local_ht);
+                }
+                sink.local_hash_tables.clear();
+                sink.hash_table->PrepareExternalFinalize();
+                sink.ScheduleFinalize(pipeline, event);
+            }
+            sink.finalized = true;
+            return SinkFinalizeType::READY;
+        } else {
+            for (auto &local_ht : sink.local_hash_tables) {
+                ht.Merge(*local_ht);
+            }
+            sink.local_hash_tables.clear();
+            ht.Unpartition();
+        }
+
+        // check for possible perfect hash table
+        /*auto use_perfect_hash = sink.perfect_join_executor->CanDoPerfectHashJoin();
+        if (use_perfect_hash) {
+            D_ASSERT(ht.equality_types.size() == 1);
+            auto key_type = ht.equality_types[0];
+            use_perfect_hash = sink.perfect_join_executor->BuildPerfectHashTable(key_type);
+        }
+        // In case of a large build side or duplicates, use regular hash join
+        if (!use_perfect_hash) {*/
+        //    sink.perfect_join_executor.reset();
+        sink.ScheduleFinalize(pipeline, event);
+        // }
+        sink.finalized = true;
+        if (ht.Count() == 0 && EmptyResultIfRHSIsEmpty()) {
+            return SinkFinalizeType::NO_OUTPUT_POSSIBLE;
+        }
+        return SinkFinalizeType::READY;
+    }
+
+//===--------------------------------------------------------------------===//
+// Operator
+//===--------------------------------------------------------------------===//
+    class SIPJoinOperatorState : public CachingOperatorState {
+    public:
+        explicit SIPJoinOperatorState(ClientContext &context) : probe_executor(context), initialized(false) {
+        }
+
+        DataChunk join_keys;
+        ExpressionExecutor probe_executor;
+        unique_ptr<SIPHashTable::SIPScanStructure> scan_structure;
+        unique_ptr<OperatorState> perfect_hash_join_state;
+
+        bool initialized;
+        SIPHashTable::SIPProbeSpillLocalAppendState spill_state;
+        //! Chunk to sink data into for external join
+        DataChunk spill_chunk;
+
+    public:
+        void Finalize(const PhysicalOperator &op, ExecutionContext &context) override {
+            context.thread.profiler.Flush(op, probe_executor, "probe_executor", 0);
+        }
+    };
+
+    unique_ptr<OperatorState> PhysicalSIPJoin::GetOperatorState(ExecutionContext &context) const {
+        auto &allocator = BufferAllocator::Get(context.client);
+        auto &sink = sink_state->Cast<SIPJoinGlobalSinkState>();
+        auto state = make_uniq<SIPJoinOperatorState>(context.client);
+        //if (sink.perfect_join_executor) {
+        //    state->perfect_hash_join_state = sink.perfect_join_executor->GetOperatorState(context);
+        // } else {
+        state->join_keys.Initialize(allocator, condition_types);
+        for (auto &cond : conditions) {
+            state->probe_executor.AddExpression(*cond.left);
+        }
+        //}
+        if (sink.external) {
+            state->spill_chunk.Initialize(allocator, sink.probe_types);
+            sink.InitializeProbeSpill();
+        }
+
+        return std::move(state);
+    }
+
+    string PhysicalSIPJoin::ParamsToString() const {
+        string extra_info = EnumUtil::ToString(join_type) + "\n";
+
+        if (right_projection_map.empty()) {
+            extra_info += " empty ";
+        }
+        else {
+            extra_info += " ";
+            for (int i = 0; i < right_projection_map.size(); ++i) {
+                extra_info += to_string(right_projection_map[i]) + ",";
+            }
+        }
+
+        for (auto &it : conditions) {
+            string op = ExpressionTypeToOperator(it.comparison);
+            BoundReferenceExpression* left = (BoundReferenceExpression*) it.left.get();
+            BoundReferenceExpression* right = (BoundReferenceExpression*) it.right.get();
+            extra_info += to_string(left->index) + op + to_string(right->index) + "--";
+            extra_info += it.left->GetName() + " " + op + " " + it.right->GetName() + "\n";
+        }
+        extra_info += "\n[INFOSEPARATOR]\n";
+        extra_info += StringUtil::Format("EC: %llu\n", estimated_cardinality);
+        return extra_info;
+    }
+
+
+    // equals ProbeHashTable
+    OperatorResultType PhysicalSIPJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+                                                             GlobalOperatorState &gstate, OperatorState &state_p) const {
+        auto &state = state_p.Cast<SIPJoinOperatorState>();
+        auto &sink = sink_state->Cast<SIPJoinGlobalSinkState>();
+                D_ASSERT(sink.finalized);
+                D_ASSERT(!sink.scanned_data);
+
+        // some initialization for external hash join
+        if (sink.external && !state.initialized) {
+            if (!sink.probe_spill) {
+                sink.InitializeProbeSpill();
+            }
+            state.spill_state = sink.probe_spill->RegisterThread();
+            state.initialized = true;
+        }
+
+        // after BuildHashTable in GetChunkInternal
+        if (sink.hash_table->Count() == 0 && EmptyResultIfRHSIsEmpty()) {
+            return OperatorResultType::FINISHED;
+        }
+
+        //if (sink.perfect_join_executor) {
+        //    D_ASSERT(!sink.external);
+        //    return sink.perfect_join_executor->ProbePerfectHashTable(context, input, chunk, *state.perfect_hash_join_state);
+        //}
+
+        if (state.scan_structure) {
+            // still have elements remaining (i.e. we got >STANDARD_VECTOR_SIZE elements in the previous probe)
+            state.scan_structure->Next(state.join_keys, input, chunk);
+            if (chunk.size() > 0) {
+                return OperatorResultType::HAVE_MORE_OUTPUT;
+            }
+            state.scan_structure = nullptr;
+            return OperatorResultType::NEED_MORE_INPUT;
+        }
+
+        // probe the HT
+        if (sink.hash_table->Count() == 0) {
+            ConstructEmptyJoinResult(sink.hash_table->join_type, sink.hash_table->has_null, input, chunk);
+            return OperatorResultType::NEED_MORE_INPUT;
+        }
+
+
+        // resolve the join keys for the left chunk
+        // state.join_keys.Reset();
+        state.probe_executor.Execute(input, state.join_keys);
+
+        // perform the actual probe
+        if (sink.external) {
+            state.scan_structure = sink.hash_table->ProbeAndSpill(state.join_keys, input, *sink.probe_spill,
+                                                                  state.spill_state, state.spill_chunk);
+        } else {
+            // ProbeHashTable -> Probe
+            state.scan_structure = sink.hash_table->Probe(state.join_keys);
+        }
+        state.scan_structure->Next(state.join_keys, input, chunk);
+        return OperatorResultType::HAVE_MORE_OUTPUT;
+    }
+
+//===--------------------------------------------------------------------===//
+// Source
+//===--------------------------------------------------------------------===//
+    enum class SIPJoinSourceStage : uint8_t { INIT, BUILD, PROBE, SCAN_HT, DONE };
+
+    class SIPJoinLocalSourceState;
+
+    class SIPJoinGlobalSourceState : public GlobalSourceState {
+    public:
+        SIPJoinGlobalSourceState(const PhysicalSIPJoin &op, ClientContext &context);
+
+        //! Initialize this source state using the info in the sink
+        void Initialize(SIPJoinGlobalSinkState &sink);
+        //! Try to prepare the next stage
+        void TryPrepareNextStage(SIPJoinGlobalSinkState &sink);
+        //! Prepare the next build/probe/scan_ht stage for external hash join (must hold lock)
+        void PrepareBuild(SIPJoinGlobalSinkState &sink);
+        void PrepareProbe(SIPJoinGlobalSinkState &sink);
+        void PrepareScanHT(SIPJoinGlobalSinkState &sink);
+        //! Assigns a task to a local source state
+        bool AssignTask(SIPJoinGlobalSinkState &sink, SIPJoinLocalSourceState &lstate);
+
+        idx_t MaxThreads() override {
+                    D_ASSERT(op.sink_state);
+            auto &gstate = op.sink_state->Cast<SIPJoinGlobalSinkState>();
+
+            idx_t count;
+            if (gstate.probe_spill) {
+                count = probe_count;
+            } else if (IsRightOuterJoin(op.join_type)) {
+                count = gstate.hash_table->Count();
+            } else {
+                return 0;
+            }
+            return count / ((idx_t)STANDARD_VECTOR_SIZE * parallel_scan_chunk_count);
+        }
+
+    public:
+        const PhysicalSIPJoin &op;
+
+        //! For synchronizing the external hash join
+        atomic<SIPJoinSourceStage> global_stage;
+        mutex lock;
+
+        //! For HT build synchronization
+        idx_t build_chunk_idx;
+        idx_t build_chunk_count;
+        idx_t build_chunk_done;
+        idx_t build_chunks_per_thread;
+
+        //! For probe synchronization
+        idx_t probe_chunk_count;
+        idx_t probe_chunk_done;
+
+        //! To determine the number of threads
+        idx_t probe_count;
+        idx_t parallel_scan_chunk_count;
+
+        //! For full/outer synchronization
+        idx_t full_outer_chunk_idx;
+        idx_t full_outer_chunk_count;
+        idx_t full_outer_chunk_done;
+        idx_t full_outer_chunks_per_thread;
+    };
+
+    class SIPJoinLocalSourceState : public LocalSourceState {
+    public:
+        SIPJoinLocalSourceState(const PhysicalSIPJoin &op, Allocator &allocator);
+
+        //! Do the work this thread has been assigned
+        void ExecuteTask(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate, DataChunk &chunk);
+        //! Whether this thread has finished the work it has been assigned
+        bool TaskFinished();
+        //! Build, probe and scan for external hash join
+        void ExternalBuild(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate);
+        void ExternalProbe(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate, DataChunk &chunk);
+        void ExternalScanHT(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate, DataChunk &chunk);
+
+    public:
+        //! The stage that this thread was assigned work for
+        SIPJoinSourceStage local_stage;
+        //! Vector with pointers here so we don't have to re-initialize
+        Vector addresses;
+
+        //! Chunks assigned to this thread for building the pointer table
+        idx_t build_chunk_idx_from;
+        idx_t build_chunk_idx_to;
+
+        //! Local scan state for probe spill
+        ColumnDataConsumerScanState probe_local_scan;
+        //! Chunks for holding the scanned probe collection
+        DataChunk probe_chunk;
+        DataChunk join_keys;
+        DataChunk payload;
+        //! Column indices to easily reference the join keys/payload columns in probe_chunk
+        vector<idx_t> join_key_indices;
+        vector<idx_t> payload_indices;
+        //! Scan structure for the external probe
+        unique_ptr<SIPHashTable::SIPScanStructure> scan_structure;
+        bool empty_ht_probe_in_progress;
+
+        //! Chunks assigned to this thread for a full/outer scan
+        idx_t full_outer_chunk_idx_from;
+        idx_t full_outer_chunk_idx_to;
+        unique_ptr<SIPHTScanState> full_outer_scan_state;
+    };
+
+    unique_ptr<GlobalSourceState> PhysicalSIPJoin::GetGlobalSourceState(ClientContext &context) const {
+        return make_uniq<SIPJoinGlobalSourceState>(*this, context);
+    }
+
+    unique_ptr<LocalSourceState> PhysicalSIPJoin::GetLocalSourceState(ExecutionContext &context,
+                                                                           GlobalSourceState &gstate) const {
+        return make_uniq<SIPJoinLocalSourceState>(*this, BufferAllocator::Get(context.client));
+    }
+
+    SIPJoinGlobalSourceState::SIPJoinGlobalSourceState(const PhysicalSIPJoin &op, ClientContext &context)
+            : op(op), global_stage(SIPJoinSourceStage::INIT), build_chunk_count(0), build_chunk_done(0), probe_chunk_count(0),
+              probe_chunk_done(0), probe_count(op.children[0]->estimated_cardinality),
+              parallel_scan_chunk_count(context.config.verify_parallelism ? 1 : 120) {
+    }
+
+    void SIPJoinGlobalSourceState::Initialize(SIPJoinGlobalSinkState &sink) {
+        lock_guard<mutex> init_lock(lock);
+        if (global_stage != SIPJoinSourceStage::INIT) {
+            // Another thread initialized
+            return;
+        }
+
+        // Finalize the probe spill
+        if (sink.probe_spill) {
+            sink.probe_spill->Finalize();
+        }
+
+        global_stage = SIPJoinSourceStage::PROBE;
+        TryPrepareNextStage(sink);
+    }
+
+    void SIPJoinGlobalSourceState::TryPrepareNextStage(SIPJoinGlobalSinkState &sink) {
+        switch (global_stage.load()) {
+            case SIPJoinSourceStage::BUILD:
+                if (build_chunk_done == build_chunk_count) {
+                    sink.hash_table->GetDataCollection().VerifyEverythingPinned();
+                    sink.hash_table->finalized = true;
+                    PrepareProbe(sink);
+                }
+                break;
+            case SIPJoinSourceStage::PROBE:
+                if (probe_chunk_done == probe_chunk_count) {
+                    if (IsRightOuterJoin(op.join_type)) {
+                        PrepareScanHT(sink);
+                    } else {
+                        PrepareBuild(sink);
+                    }
+                }
+                break;
+            case SIPJoinSourceStage::SCAN_HT:
+                if (full_outer_chunk_done == full_outer_chunk_count) {
+                    PrepareBuild(sink);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    void SIPJoinGlobalSourceState::PrepareBuild(SIPJoinGlobalSinkState &sink) {
+                D_ASSERT(global_stage != SIPJoinSourceStage::BUILD);
+        auto &ht = *sink.hash_table;
+
+        // Try to put the next partitions in the block collection of the HT
+        if (!sink.external || !ht.PrepareExternalFinalize()) {
+            global_stage = SIPJoinSourceStage::DONE;
+            return;
+        }
+
+        auto &data_collection = ht.GetDataCollection();
+        if (data_collection.Count() == 0 && op.EmptyResultIfRHSIsEmpty()) {
+            PrepareBuild(sink);
+            return;
+        }
+
+        build_chunk_idx = 0;
+        build_chunk_count = data_collection.ChunkCount();
+        build_chunk_done = 0;
+
+        auto num_threads = TaskScheduler::GetScheduler(sink.context).NumberOfThreads();
+        build_chunks_per_thread = MaxValue<idx_t>((build_chunk_count + num_threads - 1) / num_threads, 1);
+
+        ht.InitializePointerTable();
+
+        global_stage = SIPJoinSourceStage::BUILD;
+    }
+
+    void SIPJoinGlobalSourceState::PrepareProbe(SIPJoinGlobalSinkState &sink) {
+        sink.probe_spill->PrepareNextProbe();
+        const auto &consumer = *sink.probe_spill->consumer;
+
+        probe_chunk_count = consumer.Count() == 0 ? 0 : consumer.ChunkCount();
+        probe_chunk_done = 0;
+
+        global_stage = SIPJoinSourceStage::PROBE;
+        if (probe_chunk_count == 0) {
+            TryPrepareNextStage(sink);
+            return;
+        }
+    }
+
+    void SIPJoinGlobalSourceState::PrepareScanHT(SIPJoinGlobalSinkState &sink) {
+                D_ASSERT(global_stage != SIPJoinSourceStage::SCAN_HT);
+        auto &ht = *sink.hash_table;
+
+        auto &data_collection = ht.GetDataCollection();
+        full_outer_chunk_idx = 0;
+        full_outer_chunk_count = data_collection.ChunkCount();
+        full_outer_chunk_done = 0;
+
+        auto num_threads = TaskScheduler::GetScheduler(sink.context).NumberOfThreads();
+        full_outer_chunks_per_thread = MaxValue<idx_t>((full_outer_chunk_count + num_threads - 1) / num_threads, 1);
+
+        global_stage = SIPJoinSourceStage::SCAN_HT;
+    }
+
+    bool SIPJoinGlobalSourceState::AssignTask(SIPJoinGlobalSinkState &sink, SIPJoinLocalSourceState &lstate) {
+                D_ASSERT(lstate.TaskFinished());
+
+        lock_guard<mutex> guard(lock);
+        switch (global_stage.load()) {
+            case SIPJoinSourceStage::BUILD:
+                if (build_chunk_idx != build_chunk_count) {
+                    lstate.local_stage = global_stage;
+                    lstate.build_chunk_idx_from = build_chunk_idx;
+                    build_chunk_idx = MinValue<idx_t>(build_chunk_count, build_chunk_idx + build_chunks_per_thread);
+                    lstate.build_chunk_idx_to = build_chunk_idx;
+                    return true;
+                }
+                break;
+            case SIPJoinSourceStage::PROBE:
+                if (sink.probe_spill->consumer && sink.probe_spill->consumer->AssignChunk(lstate.probe_local_scan)) {
+                    lstate.local_stage = global_stage;
+                    lstate.empty_ht_probe_in_progress = false;
+                    return true;
+                }
+                break;
+            case SIPJoinSourceStage::SCAN_HT:
+                if (full_outer_chunk_idx != full_outer_chunk_count) {
+                    lstate.local_stage = global_stage;
+                    lstate.full_outer_chunk_idx_from = full_outer_chunk_idx;
+                    full_outer_chunk_idx =
+                            MinValue<idx_t>(full_outer_chunk_count, full_outer_chunk_idx + full_outer_chunks_per_thread);
+                    lstate.full_outer_chunk_idx_to = full_outer_chunk_idx;
+                    return true;
+                }
+                break;
+            case SIPJoinSourceStage::DONE:
+                break;
+            default:
+                throw InternalException("Unexpected HashJoinSourceStage in AssignTask!");
+        }
+        return false;
+    }
+
+    SIPJoinLocalSourceState::SIPJoinLocalSourceState(const PhysicalSIPJoin &op, Allocator &allocator)
+            : local_stage(SIPJoinSourceStage::INIT), addresses(LogicalType::POINTER) {
+        auto &chunk_state = probe_local_scan.current_chunk_state;
+        chunk_state.properties = ColumnDataScanProperties::ALLOW_ZERO_COPY;
+
+        auto &sink = op.sink_state->Cast<SIPJoinGlobalSinkState>();
+        probe_chunk.Initialize(allocator, sink.probe_types);
+        join_keys.Initialize(allocator, op.condition_types);
+        payload.Initialize(allocator, op.children[0]->types);
+
+        // Store the indices of the columns to reference them easily
+        idx_t col_idx = 0;
+        for (; col_idx < op.condition_types.size(); col_idx++) {
+            join_key_indices.push_back(col_idx);
+        }
+        for (; col_idx < sink.probe_types.size() - 1; col_idx++) {
+            payload_indices.push_back(col_idx);
+        }
+    }
+
+    void SIPJoinLocalSourceState::ExecuteTask(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate,
+                                                   DataChunk &chunk) {
+        switch (local_stage) {
+            case SIPJoinSourceStage::BUILD:
+                ExternalBuild(sink, gstate);
+                break;
+            case SIPJoinSourceStage::PROBE:
+                ExternalProbe(sink, gstate, chunk);
+                break;
+            case SIPJoinSourceStage::SCAN_HT:
+                ExternalScanHT(sink, gstate, chunk);
+                break;
+            default:
+                throw InternalException("Unexpected HashJoinSourceStage in ExecuteTask!");
+        }
+    }
+
+    bool SIPJoinLocalSourceState::TaskFinished() {
+        switch (local_stage) {
+            case SIPJoinSourceStage::INIT:
+            case SIPJoinSourceStage::BUILD:
+                return true;
+            case SIPJoinSourceStage::PROBE:
+                return scan_structure == nullptr && !empty_ht_probe_in_progress;
+            case SIPJoinSourceStage::SCAN_HT:
+                return full_outer_scan_state == nullptr;
+            default:
+                throw InternalException("Unexpected HashJoinSourceStage in TaskFinished!");
+        }
+    }
+
+    void SIPJoinLocalSourceState::ExternalBuild(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate) {
+                D_ASSERT(local_stage == SIPJoinSourceStage::BUILD);
+
+        auto &ht = *sink.hash_table;
+        ht.Finalize(build_chunk_idx_from, build_chunk_idx_to, true);
+
+        lock_guard<mutex> guard(gstate.lock);
+        gstate.build_chunk_done += build_chunk_idx_to - build_chunk_idx_from;
+    }
+
+    void SIPJoinLocalSourceState::ExternalProbe(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate,
+                                                     DataChunk &chunk) {
+                D_ASSERT(local_stage == SIPJoinSourceStage::PROBE && sink.hash_table->finalized);
+
+        if (scan_structure) {
+            // Still have elements remaining (i.e. we got >STANDARD_VECTOR_SIZE elements in the previous probe)
+            scan_structure->Next(join_keys, payload, chunk);
+            if (chunk.size() != 0) {
+                return;
+            }
+        }
+
+        if (scan_structure || empty_ht_probe_in_progress) {
+            // Previous probe is done
+            scan_structure = nullptr;
+            empty_ht_probe_in_progress = false;
+            sink.probe_spill->consumer->FinishChunk(probe_local_scan);
+            lock_guard<mutex> lock(gstate.lock);
+            gstate.probe_chunk_done++;
+            return;
+        }
+
+        // Scan input chunk for next probe
+        sink.probe_spill->consumer->ScanChunk(probe_local_scan, probe_chunk);
+
+        // Get the probe chunk columns/hashes
+        join_keys.ReferenceColumns(probe_chunk, join_key_indices);
+        payload.ReferenceColumns(probe_chunk, payload_indices);
+        auto precomputed_hashes = &probe_chunk.data.back();
+
+        if (sink.hash_table->Count() == 0 && !gstate.op.EmptyResultIfRHSIsEmpty()) {
+            gstate.op.ConstructEmptyJoinResult(sink.hash_table->join_type, sink.hash_table->has_null, payload, chunk);
+            empty_ht_probe_in_progress = true;
+            return;
+        }
+
+        // Perform the probe
+        scan_structure = sink.hash_table->Probe(join_keys, precomputed_hashes);
+        scan_structure->Next(join_keys, payload, chunk);
+    }
+
+    void SIPJoinLocalSourceState::ExternalScanHT(SIPJoinGlobalSinkState &sink, SIPJoinGlobalSourceState &gstate,
+                                                      DataChunk &chunk) {
+                D_ASSERT(local_stage == SIPJoinSourceStage::SCAN_HT);
+
+        if (!full_outer_scan_state) {
+            full_outer_scan_state = make_uniq<SIPHTScanState>(sink.hash_table->GetDataCollection(),
+                                                              full_outer_chunk_idx_from, full_outer_chunk_idx_to);
+        }
+        sink.hash_table->ScanFullOuter(*full_outer_scan_state, addresses, chunk);
+
+        if (chunk.size() == 0) {
+            full_outer_scan_state = nullptr;
+            lock_guard<mutex> guard(gstate.lock);
+            gstate.full_outer_chunk_done += full_outer_chunk_idx_to - full_outer_chunk_idx_from;
+        }
+    }
+
+    SourceResultType PhysicalSIPJoin::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                   OperatorSourceInput &input) const {
+        auto &sink = sink_state->Cast<SIPJoinGlobalSinkState>();
+        auto &gstate = input.global_state.Cast<SIPJoinGlobalSourceState>();
+        auto &lstate = input.local_state.Cast<SIPJoinLocalSourceState>();
+        sink.scanned_data = true;
+
+        if (!sink.external && !IsRightOuterJoin(join_type)) {
+            return SourceResultType::FINISHED;
+        }
+
+        if (gstate.global_stage == SIPJoinSourceStage::INIT) {
+            gstate.Initialize(sink);
+        }
+
+        // Any call to GetData must produce tuples, otherwise the pipeline executor thinks that we're done
+        // Therefore, we loop until we've produced tuples, or until the operator is actually done
+        while (gstate.global_stage != SIPJoinSourceStage::DONE && chunk.size() == 0) {
+            if (!lstate.TaskFinished() || gstate.AssignTask(sink, lstate)) {
+                lstate.ExecuteTask(sink, gstate, chunk);
+            } else {
+                lock_guard<mutex> guard(gstate.lock);
+                gstate.TryPrepareNextStage(sink);
+            }
+        }
+
+        return chunk.size() == 0 ? SourceResultType::FINISHED : SourceResultType::HAVE_MORE_OUTPUT;
+    }
+
+} // namespace duckdb

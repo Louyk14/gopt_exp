@@ -8,66 +8,112 @@
 
 #pragma once
 
-#include "duckdb/common/common.hpp"
-#include "duckdb/common/types/chunk_collection.hpp"
-#include "duckdb/storage/storage_manager.hpp"
-#include "duckdb/storage/meta_block_writer.hpp"
+#include "duckdb/storage/partial_block_manager.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog.hpp"
 
 namespace duckdb {
+class DatabaseInstance;
 class ClientContext;
-class MetaBlockReader;
+class ColumnSegment;
+class MetadataReader;
 class SchemaCatalogEntry;
 class SequenceCatalogEntry;
 class TableCatalogEntry;
 class ViewCatalogEntry;
+class TypeCatalogEntry;
 
-class DataPointer {
+class CheckpointWriter {
 public:
-	DataPointer(){};
-	double min;
-	double max;
-	uint64_t row_start;
-	uint64_t tuple_count;
-	block_id_t block_id;
-	uint32_t offset;
-	//! The minimum value of the segment
-	data_t min_stats[8];
-	//! The maximum value of the segment
-	data_t max_stats[8];
+	explicit CheckpointWriter(AttachedDatabase &db) : db(db) {
+	}
+	virtual ~CheckpointWriter() {
+	}
+
+	//! The database
+	AttachedDatabase &db;
+
+	virtual MetadataManager &GetMetadataManager() = 0;
+	virtual MetadataWriter &GetMetadataWriter() = 0;
+	virtual unique_ptr<TableDataWriter> GetTableDataWriter(TableCatalogEntry &table) = 0;
+
+protected:
+	virtual void WriteSchema(SchemaCatalogEntry &schema, Serializer &serializer);
+	virtual void WriteTable(TableCatalogEntry &table, Serializer &serializer);
+	virtual void WriteView(ViewCatalogEntry &table, Serializer &serializer);
+	virtual void WriteSequence(SequenceCatalogEntry &table, Serializer &serializer);
+	virtual void WriteMacro(ScalarMacroCatalogEntry &table, Serializer &serializer);
+	virtual void WriteTableMacro(TableMacroCatalogEntry &table, Serializer &serializer);
+	virtual void WriteIndex(IndexCatalogEntry &index_catalog, Serializer &serializer);
+	virtual void WriteType(TypeCatalogEntry &type, Serializer &serializer);
 };
 
-//! CheckpointManager is responsible for checkpointing the database
-class CheckpointManager {
+class CheckpointReader {
 public:
-	CheckpointManager(StorageManager &manager);
+	CheckpointReader(Catalog &catalog) : catalog(catalog) {
+	}
+	virtual ~CheckpointReader() {
+	}
+
+protected:
+	Catalog &catalog;
+
+protected:
+	virtual void LoadCheckpoint(ClientContext &context, MetadataReader &reader);
+	virtual void ReadSchema(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadTable(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadView(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadSequence(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadMacro(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadTableMacro(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadIndex(ClientContext &context, Deserializer &deserializer);
+	virtual void ReadType(ClientContext &context, Deserializer &deserializer);
+
+	virtual void ReadTableData(ClientContext &context, Deserializer &deserializer, BoundCreateTableInfo &bound_info);
+};
+
+class SingleFileCheckpointReader final : public CheckpointReader {
+public:
+	explicit SingleFileCheckpointReader(SingleFileStorageManager &storage)
+	    : CheckpointReader(Catalog::GetCatalog(storage.GetAttached())), storage(storage) {
+	}
+
+	void LoadFromStorage();
+	MetadataManager &GetMetadataManager();
+
+	//! The database
+	SingleFileStorageManager &storage;
+};
+
+//! CheckpointWriter is responsible for checkpointing the database
+class SingleFileRowGroupWriter;
+class SingleFileTableDataWriter;
+
+class SingleFileCheckpointWriter final : public CheckpointWriter {
+	friend class SingleFileRowGroupWriter;
+	friend class SingleFileTableDataWriter;
+
+public:
+	SingleFileCheckpointWriter(AttachedDatabase &db, BlockManager &block_manager);
 
 	//! Checkpoint the current state of the WAL and flush it to the main storage. This should be called BEFORE any
-	//! connction is available because right now the checkpointing cannot be done online. (TODO)
+	//! connection is available because right now the checkpointing cannot be done online. (TODO)
 	void CreateCheckpoint();
-	//! Load from a stored checkpoint
-	void LoadFromStorage();
 
-	//! The block manager to write the checkpoint to
-	BlockManager &block_manager;
-	//! The buffer manager
-	BufferManager &buffer_manager;
-	//! The database this storagemanager belongs to
-	DuckDB &database;
-	//! The metadata writer is responsible for writing schema information
-	unique_ptr<MetaBlockWriter> metadata_writer;
-	//! The table data writer is responsible for writing the DataPointers used by the table chunks
-	unique_ptr<MetaBlockWriter> tabledata_writer;
+	virtual MetadataWriter &GetMetadataWriter() override;
+	virtual MetadataManager &GetMetadataManager() override;
+	virtual unique_ptr<TableDataWriter> GetTableDataWriter(TableCatalogEntry &table) override;
+
+	BlockManager &GetBlockManager();
 
 private:
-	void WriteSchema(Transaction &transaction, SchemaCatalogEntry &schema);
-	void WriteTable(Transaction &transaction, TableCatalogEntry &table);
-	void WriteView(ViewCatalogEntry &table);
-	void WriteSequence(SequenceCatalogEntry &table);
-
-	void ReadSchema(ClientContext &context, MetaBlockReader &reader);
-	void ReadTable(ClientContext &context, MetaBlockReader &reader);
-	void ReadView(ClientContext &context, MetaBlockReader &reader);
-	void ReadSequence(ClientContext &context, MetaBlockReader &reader);
+	//! The metadata writer is responsible for writing schema information
+	unique_ptr<MetadataWriter> metadata_writer;
+	//! The table data writer is responsible for writing the DataPointers used by the table chunks
+	unique_ptr<MetadataWriter> table_metadata_writer;
+	//! Because this is single-file storage, we can share partial blocks across
+	//! an entire checkpoint.
+	PartialBlockManager partial_block_manager;
 };
 
 } // namespace duckdb

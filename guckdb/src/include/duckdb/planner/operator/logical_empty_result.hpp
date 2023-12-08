@@ -12,20 +12,30 @@
 
 namespace duckdb {
 
-//! LogicalEmptyResult returns an empty result. This is created by the optimizer if it can reason that ceratin parts of
+//! LogicalEmptyResult returns an empty result. This is created by the optimizer if it can reason that certain parts of
 //! the tree will always return an empty result.
 class LogicalEmptyResult : public LogicalOperator {
+	LogicalEmptyResult();
+
 public:
-	LogicalEmptyResult(unique_ptr<LogicalOperator> op);
+	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_EMPTY_RESULT;
+
+public:
+	explicit LogicalEmptyResult(unique_ptr<LogicalOperator> op);
 
 	//! The set of return types of the empty result
-	vector<TypeId> return_types;
+	vector<LogicalType> return_types;
 	//! The columns that would be bound at this location (if the subtree was not optimized away)
 	vector<ColumnBinding> bindings;
 
 public:
 	vector<ColumnBinding> GetColumnBindings() override {
 		return bindings;
+	}
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
+	idx_t EstimateCardinality(ClientContext &context) override {
+		return 0;
 	}
 
 protected:

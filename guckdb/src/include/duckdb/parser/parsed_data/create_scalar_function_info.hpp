@@ -15,16 +15,14 @@
 namespace duckdb {
 
 struct CreateScalarFunctionInfo : public CreateFunctionInfo {
-	CreateScalarFunctionInfo(ScalarFunction function) : CreateFunctionInfo(CatalogType::SCALAR_FUNCTION) {
-		this->name = function.name;
-		functions.push_back(function);
-	}
-	CreateScalarFunctionInfo(ScalarFunctionSet set)
-	    : CreateFunctionInfo(CatalogType::SCALAR_FUNCTION), functions(move(set.functions)) {
-		this->name = set.name;
-	}
+	DUCKDB_API explicit CreateScalarFunctionInfo(ScalarFunction function);
+	DUCKDB_API explicit CreateScalarFunctionInfo(ScalarFunctionSet set);
 
-	vector<ScalarFunction> functions;
+	ScalarFunctionSet functions;
+
+public:
+	DUCKDB_API unique_ptr<CreateInfo> Copy() const override;
+	DUCKDB_API unique_ptr<AlterInfo> GetAlterInfo() const override;
 };
 
 } // namespace duckdb

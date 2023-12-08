@@ -17,6 +17,7 @@ class BoundQueryNode;
 class BoundSelectNode;
 class BoundSetOperationNode;
 class BoundRecursiveCTENode;
+class BoundCTENode;
 
 //===--------------------------------------------------------------------===//
 // Expressions
@@ -39,7 +40,6 @@ class BoundReferenceExpression;
 class BoundSubqueryExpression;
 class BoundUnnestExpression;
 class BoundWindowExpression;
-class CommonSubExpression;
 
 //===--------------------------------------------------------------------===//
 // TableRefs
@@ -47,12 +47,12 @@ class CommonSubExpression;
 class BoundTableRef;
 
 class BoundBaseTableRef;
-class BoundCrossProductRef;
 class BoundJoinRef;
 class BoundSubqueryRef;
 class BoundTableFunction;
 class BoundEmptyTableRef;
 class BoundExpressionListRef;
 class BoundCTERef;
+class BoundPivotRef;
 
 } // namespace duckdb

@@ -2,32 +2,19 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/chrono.hpp"
+#include "duckdb/common/operator/add.hpp"
+#include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/operator/subtract.hpp"
+#include "duckdb/common/limits.hpp"
+#include <ctime>
 
-#include <iomanip>
-#include <iostream>
-#include <sstream>
+namespace duckdb {
 
-using namespace duckdb;
-using namespace std;
-
-constexpr const int32_t MONTHS_PER_YEAR = 12;
-constexpr const int32_t HOURS_PER_DAY = 24; //! assume no daylight savings time changes
-constexpr const int32_t STD_TIMESTAMP_LENGTH = 19;
-constexpr const int32_t START_YEAR = 1900;
-
-constexpr const int32_t SECS_PER_MINUTE = 60;
-constexpr const int32_t MINS_PER_HOUR = 60;
-constexpr const int64_t MSECS_PER_HOUR = 360000;
-constexpr const int64_t MSECS_PER_MINUTE = 60000;
-constexpr const int64_t MSECS_PER_SEC = 1000;
-
-// Used to check amount of days per month in common year and leap year
-constexpr int days_per_month[2][13] = {{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 0},
-                                       {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 0}};
-constexpr bool isleap(int16_t year) {
-	return (((year) % 4) == 0 && (((year) % 100) != 0 || ((year) % 400) == 0));
-}
+static_assert(sizeof(timestamp_t) == sizeof(int64_t), "timestamp_t was padded");
 
 // timestamp/datetime uses 64 bits, high 32 bits for date and low 32 bits for time
 // string format is YYYY-MM-DDThh:mm:ssZ
@@ -35,216 +22,330 @@ constexpr bool isleap(int16_t year) {
 // Z is optional
 // ISO 8601
 
-timestamp_t Timestamp::FromString(string str) {
-	assert(sizeof(timestamp_t) == 8);
-	assert(sizeof(date_t) == 4);
-	assert(sizeof(dtime_t) == 4);
-
-	// In case we have only date we add a default time
-	if (str.size() == 10) {
-		str += " 00:00:00";
+// arithmetic operators
+timestamp_t timestamp_t::operator+(const double &value) const {
+	timestamp_t result;
+	if (!TryAddOperator::Operation(this->value, int64_t(value), result.value)) {
+		throw OutOfRangeException("Overflow in timestamp addition");
 	}
-	// Character length	19 positions minimum to 23 maximum
-	if (str.size() < STD_TIMESTAMP_LENGTH) {
-		throw ConversionException("timestamp field value out of range: \"%s\", "
-		                          "expected format is (YYYY-MM-DD HH:MM:SS[.MS])",
-		                          str.c_str());
+	return result;
+}
+
+int64_t timestamp_t::operator-(const timestamp_t &other) const {
+	int64_t result;
+	if (!TrySubtractOperator::Operation(value, int64_t(other.value), result)) {
+		throw OutOfRangeException("Overflow in timestamp subtraction");
 	}
+	return result;
+}
 
-	date_t date = Date::FromString(str.substr(0, 10));
-	dtime_t time = Time::FromString(str.substr(10));
+// in-place operators
+timestamp_t &timestamp_t::operator+=(const int64_t &delta) {
+	if (!TryAddOperator::Operation(value, delta, value)) {
+		throw OutOfRangeException("Overflow in timestamp increment");
+	}
+	return *this;
+}
 
-	return ((int64_t)date << 32 | (int32_t)time);
+timestamp_t &timestamp_t::operator-=(const int64_t &delta) {
+	if (!TrySubtractOperator::Operation(value, delta, value)) {
+		throw OutOfRangeException("Overflow in timestamp decrement");
+	}
+	return *this;
+}
+
+bool Timestamp::TryConvertTimestampTZ(const char *str, idx_t len, timestamp_t &result, bool &has_offset, string_t &tz) {
+	idx_t pos;
+	date_t date;
+	dtime_t time;
+	has_offset = false;
+	if (!Date::TryConvertDate(str, len, pos, date, has_offset)) {
+		return false;
+	}
+	if (pos == len) {
+		// no time: only a date or special
+		if (date == date_t::infinity()) {
+			result = timestamp_t::infinity();
+			return true;
+		} else if (date == date_t::ninfinity()) {
+			result = timestamp_t::ninfinity();
+			return true;
+		}
+		return Timestamp::TryFromDatetime(date, dtime_t(0), result);
+	}
+	// try to parse a time field
+	if (str[pos] == ' ' || str[pos] == 'T') {
+		pos++;
+	}
+	idx_t time_pos = 0;
+	if (!Time::TryConvertTime(str + pos, len - pos, time_pos, time)) {
+		return false;
+	}
+	pos += time_pos;
+	if (!Timestamp::TryFromDatetime(date, time, result)) {
+		return false;
+	}
+	if (pos < len) {
+		// skip a "Z" at the end (as per the ISO8601 specs)
+		int hour_offset, minute_offset;
+		if (str[pos] == 'Z') {
+			pos++;
+			has_offset = true;
+		} else if (Timestamp::TryParseUTCOffset(str, pos, len, hour_offset, minute_offset)) {
+			const int64_t delta = hour_offset * Interval::MICROS_PER_HOUR + minute_offset * Interval::MICROS_PER_MINUTE;
+			if (!TrySubtractOperator::Operation(result.value, delta, result.value)) {
+				return false;
+			}
+			has_offset = true;
+		} else {
+			// Parse a time zone: / [A-Za-z0-9/_]+/
+			if (str[pos++] != ' ') {
+				return false;
+			}
+			auto tz_name = str + pos;
+			for (; pos < len && CharacterIsTimeZone(str[pos]); ++pos) {
+				continue;
+			}
+			auto tz_len = str + pos - tz_name;
+			if (tz_len) {
+				tz = string_t(tz_name, tz_len);
+			}
+			// Note that the caller must reinterpret the instant we return to the given time zone
+		}
+
+		// skip any spaces at the end
+		while (pos < len && StringUtil::CharacterIsSpace(str[pos])) {
+			pos++;
+		}
+		if (pos < len) {
+			return false;
+		}
+	}
+	return true;
+}
+
+TimestampCastResult Timestamp::TryConvertTimestamp(const char *str, idx_t len, timestamp_t &result) {
+	string_t tz(nullptr, 0);
+	bool has_offset = false;
+	// We don't understand TZ without an extension, so fail if one was provided.
+	auto success = TryConvertTimestampTZ(str, len, result, has_offset, tz);
+	if (!success) {
+		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
+	}
+	if (tz.GetSize() == 0) {
+		// no timezone provided - success!
+		return TimestampCastResult::SUCCESS;
+	}
+	if (tz.GetSize() == 3) {
+		// we can ONLY handle UTC without ICU being loaded
+		auto tz_ptr = tz.GetData();
+		if ((tz_ptr[0] == 'u' || tz_ptr[0] == 'U') && (tz_ptr[1] == 't' || tz_ptr[1] == 'T') &&
+		    (tz_ptr[2] == 'c' || tz_ptr[2] == 'C')) {
+			return TimestampCastResult::SUCCESS;
+		}
+	}
+	return TimestampCastResult::ERROR_NON_UTC_TIMEZONE;
+}
+
+string Timestamp::ConversionError(const string &str) {
+	return StringUtil::Format("timestamp field value out of range: \"%s\", "
+	                          "expected format is (YYYY-MM-DD HH:MM:SS[.US][±HH:MM| ZONE])",
+	                          str);
+}
+
+string Timestamp::UnsupportedTimezoneError(const string &str) {
+	return StringUtil::Format("timestamp field value \"%s\" has a timestamp that is not UTC.\nUse the TIMESTAMPTZ type "
+	                          "with the ICU extension loaded to handle non-UTC timestamps.",
+	                          str);
+}
+
+string Timestamp::ConversionError(string_t str) {
+	return Timestamp::ConversionError(str.GetString());
+}
+
+string Timestamp::UnsupportedTimezoneError(string_t str) {
+	return Timestamp::UnsupportedTimezoneError(str.GetString());
+}
+
+timestamp_t Timestamp::FromCString(const char *str, idx_t len) {
+	timestamp_t result;
+	auto cast_result = Timestamp::TryConvertTimestamp(str, len, result);
+	if (cast_result == TimestampCastResult::SUCCESS) {
+		return result;
+	}
+	if (cast_result == TimestampCastResult::ERROR_NON_UTC_TIMEZONE) {
+		throw ConversionException(Timestamp::UnsupportedTimezoneError(string(str, len)));
+	} else {
+		throw ConversionException(Timestamp::ConversionError(string(str, len)));
+	}
+}
+
+bool Timestamp::TryParseUTCOffset(const char *str, idx_t &pos, idx_t len, int &hour_offset, int &minute_offset) {
+	minute_offset = 0;
+	idx_t curpos = pos;
+	// parse the next 3 characters
+	if (curpos + 3 > len) {
+		// no characters left to parse
+		return false;
+	}
+	char sign_char = str[curpos];
+	if (sign_char != '+' && sign_char != '-') {
+		// expected either + or -
+		return false;
+	}
+	curpos++;
+	if (!StringUtil::CharacterIsDigit(str[curpos]) || !StringUtil::CharacterIsDigit(str[curpos + 1])) {
+		// expected +HH or -HH
+		return false;
+	}
+	hour_offset = (str[curpos] - '0') * 10 + (str[curpos + 1] - '0');
+	if (sign_char == '-') {
+		hour_offset = -hour_offset;
+	}
+	curpos += 2;
+
+	// optional minute specifier: expected either "MM" or ":MM"
+	if (curpos >= len) {
+		// done, nothing left
+		pos = curpos;
+		return true;
+	}
+	if (str[curpos] == ':') {
+		curpos++;
+	}
+	if (curpos + 2 > len || !StringUtil::CharacterIsDigit(str[curpos]) ||
+	    !StringUtil::CharacterIsDigit(str[curpos + 1])) {
+		// no MM specifier
+		pos = curpos;
+		return true;
+	}
+	// we have an MM specifier: parse it
+	minute_offset = (str[curpos] - '0') * 10 + (str[curpos + 1] - '0');
+	if (sign_char == '-') {
+		minute_offset = -minute_offset;
+	}
+	pos = curpos + 2;
+	return true;
+}
+
+timestamp_t Timestamp::FromString(const string &str) {
+	return Timestamp::FromCString(str.c_str(), str.size());
 }
 
 string Timestamp::ToString(timestamp_t timestamp) {
-	assert(sizeof(timestamp_t) == 8);
-	assert(sizeof(date_t) == 4);
-	assert(sizeof(dtime_t) == 4);
-
-	return Date::ToString(GetDate(timestamp)) + " " + Time::ToString(GetTime(timestamp));
+	if (timestamp == timestamp_t::infinity()) {
+		return Date::PINF;
+	} else if (timestamp == timestamp_t::ninfinity()) {
+		return Date::NINF;
+	}
+	date_t date;
+	dtime_t time;
+	Timestamp::Convert(timestamp, date, time);
+	return Date::ToString(date) + " " + Time::ToString(time);
 }
 
 date_t Timestamp::GetDate(timestamp_t timestamp) {
-	return (date_t)(((int64_t)timestamp) >> 32);
+	if (timestamp == timestamp_t::infinity()) {
+		return date_t::infinity();
+	} else if (timestamp == timestamp_t::ninfinity()) {
+		return date_t::ninfinity();
+	}
+	return date_t((timestamp.value + (timestamp.value < 0)) / Interval::MICROS_PER_DAY - (timestamp.value < 0));
 }
 
 dtime_t Timestamp::GetTime(timestamp_t timestamp) {
-	return (dtime_t)(timestamp & 0xFFFFFFFF);
+	if (!IsFinite(timestamp)) {
+		throw ConversionException("Can't get TIME of infinite TIMESTAMP");
+	}
+	date_t date = Timestamp::GetDate(timestamp);
+	return dtime_t(timestamp.value - (int64_t(date.days) * int64_t(Interval::MICROS_PER_DAY)));
+}
+
+bool Timestamp::TryFromDatetime(date_t date, dtime_t time, timestamp_t &result) {
+	if (!TryMultiplyOperator::Operation<int64_t, int64_t, int64_t>(date.days, Interval::MICROS_PER_DAY, result.value)) {
+		return false;
+	}
+	if (!TryAddOperator::Operation<int64_t, int64_t, int64_t>(result.value, time.micros, result.value)) {
+		return false;
+	}
+	return Timestamp::IsFinite(result);
 }
 
 timestamp_t Timestamp::FromDatetime(date_t date, dtime_t time) {
-	return ((int64_t)date << 32 | (int64_t)time);
+	timestamp_t result;
+	if (!TryFromDatetime(date, time, result)) {
+		throw Exception("Overflow exception in date/time -> timestamp conversion");
+	}
+	return result;
 }
 
-void Timestamp::Convert(timestamp_t date, date_t &out_date, dtime_t &out_time) {
-	out_date = GetDate(date);
-	out_time = GetTime(date);
+void Timestamp::Convert(timestamp_t timestamp, date_t &out_date, dtime_t &out_time) {
+	out_date = GetDate(timestamp);
+	int64_t days_micros;
+	if (!TryMultiplyOperator::Operation<int64_t, int64_t, int64_t>(out_date.days, Interval::MICROS_PER_DAY,
+	                                                               days_micros)) {
+		throw ConversionException("Date out of range in timestamp conversion");
+	}
+	out_time = dtime_t(timestamp.value - days_micros);
+	D_ASSERT(timestamp == Timestamp::FromDatetime(out_date, out_time));
 }
 
 timestamp_t Timestamp::GetCurrentTimestamp() {
-	auto in_time_t = std::time(nullptr);
-	auto utc = std::gmtime(&in_time_t);
-
-	// tm_year[0...] considers the amount of years since 1900 and tm_mon considers the amount of months since january
-	// tm_mon[0-11]
-	auto date = Date::FromDate(utc->tm_year + START_YEAR, utc->tm_mon + 1, utc->tm_mday);
-	auto time = Time::FromTime(utc->tm_hour, utc->tm_min, utc->tm_sec);
-
-	return Timestamp::FromDatetime(date, time);
+	auto now = system_clock::now();
+	auto epoch_ms = duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+	return Timestamp::FromEpochMs(epoch_ms);
 }
 
-Interval Timestamp::GetDifference(timestamp_t timestamp_1, timestamp_t timestamp_2) {
-	// First extract the dates
-	auto date1 = GetDate(timestamp_1);
-	auto date2 = GetDate(timestamp_2);
-	// and from date extract the years, months and days
-	int32_t year1, month1, day1;
-	int32_t year2, month2, day2;
-	Date::Convert(date1, year1, month1, day1);
-	Date::Convert(date2, year2, month2, day2);
-	// finally perform the differences
-	auto year_diff = year1 - year2;
-	auto month_diff = month1 - month2;
-	auto day_diff = day1 - day2;
-
-	// Now we extract the time
-	auto time1 = GetTime(timestamp_1);
-	auto time2 = GetTime(timestamp_2);
-
-	// In case time is not specified we do not show it in the output
-	if (time1 == 0) {
-		time2 = time1;
+timestamp_t Timestamp::FromEpochSeconds(int64_t sec) {
+	int64_t result;
+	if (!TryMultiplyOperator::Operation(sec, Interval::MICROS_PER_SEC, result)) {
+		throw ConversionException("Could not convert Timestamp(S) to Timestamp(US)");
 	}
-
-	// and from time extract hours, minutes, seconds and miliseconds
-	int32_t hour1, min1, sec1, msec1;
-	int32_t hour2, min2, sec2, msec2;
-	Time::Convert(time1, hour1, min1, sec1, msec1);
-	Time::Convert(time2, hour2, min2, sec2, msec2);
-	// finally perform the differences
-	auto hour_diff = hour1 - hour2;
-	auto min_diff = min1 - min2;
-	auto sec_diff = sec1 - sec2;
-	auto msec_diff = msec1 - msec2;
-
-	// flip sign if necessary
-	if (timestamp_1 < timestamp_2) {
-		year_diff = -year_diff;
-		month_diff = -month_diff;
-		day_diff = -day_diff;
-		hour_diff = -hour_diff;
-		min_diff = -min_diff;
-		sec_diff = -sec_diff;
-		msec_diff = -msec_diff;
-	}
-	// now propagate any negative field into the next higher field
-	while (msec_diff < 0) {
-		msec_diff += MSECS_PER_SEC;
-		sec_diff--;
-	}
-	while (sec_diff < 0) {
-		sec_diff += SECS_PER_MINUTE;
-		min_diff--;
-	}
-	while (min_diff < 0) {
-		min_diff += MINS_PER_HOUR;
-		hour_diff--;
-	}
-	while (hour_diff < 0) {
-		hour_diff += HOURS_PER_DAY;
-		day_diff--;
-	}
-	while (day_diff < 0) {
-		if (timestamp_1 < timestamp_2) {
-			day_diff += days_per_month[isleap(year1)][month1 - 1];
-			month_diff--;
-		} else {
-			day_diff += days_per_month[isleap(year2)][month2 - 1];
-			month_diff--;
-		}
-	}
-	while (month_diff < 0) {
-		month_diff += MONTHS_PER_YEAR;
-		year_diff--;
-	}
-
-	// recover sign if necessary
-	if (timestamp_1 < timestamp_2 && (month_diff != 0 || day_diff != 0)) {
-		year_diff = -year_diff;
-		month_diff = -month_diff;
-		day_diff = -day_diff;
-		hour_diff = -hour_diff;
-		min_diff = -min_diff;
-		sec_diff = -sec_diff;
-		msec_diff = -msec_diff;
-	}
-	Interval interval;
-	interval.months = year_diff * MONTHS_PER_YEAR + month_diff;
-	interval.days = day_diff;
-	interval.time =
-	    ((((((hour_diff * MINS_PER_HOUR) + min_diff) * SECS_PER_MINUTE) + sec_diff) * MSECS_PER_SEC) + msec_diff);
-
-	return interval;
+	return timestamp_t(result);
 }
 
-timestamp_struct Timestamp::IntervalToTimestamp(Interval &interval) {
-	timestamp_struct timestamp;
-
-	if (interval.months != 0) {
-		timestamp.year = interval.months / MONTHS_PER_YEAR;
-		timestamp.month = interval.months % MONTHS_PER_YEAR;
-
-	} else {
-		timestamp.year = 0;
-		timestamp.month = 0;
+timestamp_t Timestamp::FromEpochMs(int64_t ms) {
+	int64_t result;
+	if (!TryMultiplyOperator::Operation(ms, Interval::MICROS_PER_MSEC, result)) {
+		throw ConversionException("Could not convert Timestamp(MS) to Timestamp(US)");
 	}
-	timestamp.day = interval.days;
-	auto time = interval.time;
-
-	timestamp.hour = time / MSECS_PER_HOUR;
-	time -= timestamp.hour * MSECS_PER_HOUR;
-	timestamp.min = time / MSECS_PER_MINUTE;
-	time -= timestamp.min * MSECS_PER_MINUTE;
-	timestamp.sec = time / MSECS_PER_SEC;
-	timestamp.msec = time - (timestamp.sec * MSECS_PER_SEC);
-	return timestamp;
+	return timestamp_t(result);
 }
 
-Interval TimestampToInterval(timestamp_struct *timestamp) {
-	Interval interval;
-
-	interval.months = timestamp->year * MONTHS_PER_YEAR + timestamp->month;
-	interval.days = timestamp->day;
-	interval.time =
-	    ((((((timestamp->hour * MINS_PER_HOUR) + timestamp->min) * SECS_PER_MINUTE) + timestamp->sec) * MSECS_PER_SEC) +
-	     timestamp->msec);
-
-	return interval;
+timestamp_t Timestamp::FromEpochMicroSeconds(int64_t micros) {
+	return timestamp_t(micros);
 }
 
-int64_t Timestamp::GetEpoch(timestamp_t timestamp) {
-	return Date::Epoch(Timestamp::GetDate(timestamp)) + (int64_t)(Timestamp::GetTime(timestamp) / 1000);
+timestamp_t Timestamp::FromEpochNanoSeconds(int64_t ns) {
+	return timestamp_t(ns / 1000);
 }
 
-int64_t Timestamp::GetMilliseconds(timestamp_t timestamp) {
-	int n = Timestamp::GetTime(timestamp);
-	int m = n / 60000;
-	return n - m * 60000;
+int64_t Timestamp::GetEpochSeconds(timestamp_t timestamp) {
+	return timestamp.value / Interval::MICROS_PER_SEC;
 }
 
-int64_t Timestamp::GetSeconds(timestamp_t timestamp) {
-	int n = Timestamp::GetTime(timestamp);
-	int m = n / 60000;
-	return (n - m * 60000) / 1000;
+int64_t Timestamp::GetEpochMs(timestamp_t timestamp) {
+	return timestamp.value / Interval::MICROS_PER_MSEC;
 }
 
-int64_t Timestamp::GetMinutes(timestamp_t timestamp) {
-	int n = Timestamp::GetTime(timestamp);
-	int h = n / 3600000;
-	return (n - h * 3600000) / 60000;
+int64_t Timestamp::GetEpochMicroSeconds(timestamp_t timestamp) {
+	return timestamp.value;
 }
 
-int64_t Timestamp::GetHours(timestamp_t timestamp) {
-	return Timestamp::GetTime(timestamp) / 3600000;
+int64_t Timestamp::GetEpochNanoSeconds(timestamp_t timestamp) {
+	int64_t result;
+	int64_t ns_in_us = 1000;
+	if (!TryMultiplyOperator::Operation(timestamp.value, ns_in_us, result)) {
+		throw ConversionException("Could not convert Timestamp(US) to Timestamp(NS)");
+	}
+	return result;
 }
+
+double Timestamp::GetJulianDay(timestamp_t timestamp) {
+	double result = Timestamp::GetTime(timestamp).micros;
+	result /= Interval::MICROS_PER_DAY;
+	result += Date::ExtractJulianDay(Timestamp::GetDate(timestamp));
+	return result;
+}
+
+} // namespace duckdb

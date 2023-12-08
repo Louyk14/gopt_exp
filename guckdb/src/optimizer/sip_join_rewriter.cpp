@@ -9,7 +9,7 @@ namespace duckdb {
 using namespace std;
 
 unique_ptr<LogicalOperator> SIPJoinRewriter::Rewrite(unique_ptr<LogicalOperator> op) {
-	if (op->type == LogicalOperatorType::CREATE_RAI) {
+	if (op->type == LogicalOperatorType::LOGICAL_CREATE_RAI) {
 		return op;
 	}
 	VisitOperator(*op);
@@ -17,7 +17,7 @@ unique_ptr<LogicalOperator> SIPJoinRewriter::Rewrite(unique_ptr<LogicalOperator>
 }
 
 static bool IsDirectScan(LogicalOperator &op) {
-	if (op.type == LogicalOperatorType::GET) {
+	if (op.type == LogicalOperatorType::LOGICAL_GET) {
 		return true;
 	}
 	if (op.children.size() == 1) {
@@ -32,21 +32,21 @@ static inline void RewriteJoinCondition(column_t edge_column, BoundColumnRefExpr
 	// rewrite the rai join condition
 	ColumnBinding edge_binding(edge->binding.table_index, edge_column, edge_column, edge->binding.table);
 	edge->binding = join.PushdownColumnBinding(edge_binding);
-	edge->alias = edge->binding.table->columns[edge_column].name + "_rowid";
-	edge->return_type = TypeId::INT64;
+	edge->alias = edge->binding.table->GetColumn(LogicalIndex(edge_column)).Name() + "_rowid";
+	edge->return_type = LogicalType::BIGINT;
 	ColumnBinding vertex_binding(vertex->binding.table_index, vertex_column, vertex_column, vertex->binding.table);
-	vertex->binding = join.PushdownColumnBinding(vertex_binding);
+    vertex->binding = join.PushdownColumnBinding(vertex_binding);
 	vertex->alias = vertex_column == COLUMN_IDENTIFIER_ROW_ID
 	                    ? vertex_binding.table->name + "_rowid"
-	                    : vertex_binding.table->columns[vertex_column].name + ".rowid";
-	vertex->return_type = TypeId::INT64;
+	                    : vertex_binding.table->GetColumn(LogicalIndex(vertex_column)).Name() + ".rowid";
+	vertex->return_type = LogicalType::BIGINT;
 	// add join op mark
 	join.op_mark = OpMark::SIP_JOIN;
-	if (check_aj) {
-		join.enable_lookup_join = IsDirectScan(*join.children[0]);
-	} else {
-		join.enable_lookup_join = false;
-	}
+	// if (check_aj) {
+	//	join.enable_lookup_join = IsDirectScan(*join.children[0]);
+	//} else {
+	//	join.enable_lookup_join = false;
+	//}
 }
 
 bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr<RAI>> &rais,
@@ -55,15 +55,15 @@ bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr
 	auto left = reinterpret_cast<BoundColumnRefExpression *>(condition.left.get());
 	auto right = reinterpret_cast<BoundColumnRefExpression *>(condition.right.get());
 	for (auto &rai : rais) {
-		auto rai_info = make_unique<RAIInfo>();
+		auto rai_info = make_uniq<RAIInfo>();
 		if (left->binding.table == rai->referenced_tables[0] && right->binding.table == rai->table &&
 		    left->binding.column_ordinal == rai->referenced_columns[0] &&
-		    right->binding.column_ordinal == rai->column_ids[0]) { // SOURCE_EDGE
+		    right->binding.column_index == rai->column_ids[0]) { // SOURCE_EDGE
 			rai_info->rai_type = RAIType::SOURCE_EDGE;
 			check_if_enable_aj = true;
 		} else if (left->binding.table == rai->referenced_tables[1] && right->binding.table == rai->table &&
-		           left->binding.column_ordinal == rai->referenced_columns[1] &&
-		           right->binding.column_ordinal == rai->column_ids[1]) { // TARGET_EDGE
+		           left->binding.column_index == rai->referenced_columns[1] &&
+		           right->binding.column_index == rai->column_ids[1]) { // TARGET_EDGE
 			rai_info->rai_type = RAIType::TARGET_EDGE;
 			check_if_enable_aj = true;
 #if ENABLE_ALISTS
@@ -86,7 +86,7 @@ bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr
 					if (rinfo->rai == rai.get() && rinfo->vertex == rai->referenced_tables[1] &&
 					    rinfo->passing_tables[0] == 0) {
 						rai_info->passing_tables[1] = rinfo->vertex_id;
-						rai_info->left_cardinalities[1] = rinfo->vertex->storage->info->cardinality;
+						rai_info->left_cardinalities[1] = rinfo->vertex->GetStorage().info->cardinality;
 					}
 				}
 			}
@@ -123,7 +123,7 @@ bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr
 			rai_info->vertex = left->binding.table;
 			rai_info->vertex_id = left->binding.table_index;
 			rai_info->passing_tables[0] = left->binding.table_index;
-			rai_info->left_cardinalities[0] = left->binding.table->storage->info->cardinality;
+			rai_info->left_cardinalities[0] = left->binding.table->GetStorage().info->cardinality;
 			if (rai_info_map.find(right->binding.table_index) == rai_info_map.end()) {
 				vector<RAIInfo *> infos;
 				rai_info_map[right->binding.table_index] = infos;
@@ -141,7 +141,7 @@ bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr
 			rai_info->rai = rai.get();
 			rai_info->vertex = right->binding.table;
 			rai_info->vertex_id = right->binding.table_index;
-			rai_info->left_cardinalities[0] = left->binding.table->storage->info->cardinality;
+			rai_info->left_cardinalities[0] = left->binding.table->GetStorage().info->cardinality;
 			if (rai_info->rai_type == RAIType::EDGE_SOURCE) {
 				rai_info->compact_list = &rai_info->rai->alist->compact_forward_list;
 			} else if (rai_info->rai_type == RAIType::EDGE_TARGET &&
@@ -162,7 +162,7 @@ bool SIPJoinRewriter::BindRAIInfo(LogicalComparisonJoin &join, vector<unique_ptr
 		case RAIType::SELF: {
 			rai_info->rai = rai.get();
 			rai_info->passing_tables[0] = left->binding.table_index;
-			rai_info->left_cardinalities[0] = left->binding.table->storage->info->cardinality;
+			rai_info->left_cardinalities[0] = left->binding.table->GetStorage().info->cardinality;
 			rai_info->compact_list = rai_info->forward ? &rai_info->rai->alist->compact_forward_list
 			                                           : &rai_info->rai->alist->compact_backward_list;
 			RewriteJoinCondition(left->binding.column_ordinal, left, right->binding.column_ordinal, right, join, true);
@@ -184,11 +184,25 @@ void SIPJoinRewriter::DoRewrite(LogicalComparisonJoin &join) {
 		    condition->comparison == ExpressionType::COMPARE_EQUAL) {
 			auto &left_binding = reinterpret_cast<BoundColumnRefExpression *>(condition->left.get())->binding;
 			auto &right_binding = reinterpret_cast<BoundColumnRefExpression *>(condition->right.get())->binding;
+
+            if (left_binding.table == NULL) {
+                // left_binding.column_ordinal = left_binding.column_index;
+                int left_index = left_binding.table_index;
+                if (left_index < binder.bind_context.GetBindingsList().size())
+                    left_binding.table = binder.bind_context.GetBindingsEntry(left_index);
+            }
+            if (right_binding.table == NULL) {
+                // right_binding.column_ordinal = right_binding.column_index;
+                int right_index = right_binding.table_index;
+                if (right_index < binder.bind_context.GetBindingsList().size())
+                    right_binding.table = binder.bind_context.GetBindingsEntry(right_index);
+            }
+
 			if (left_binding.table == nullptr || right_binding.table == nullptr) {
 				continue;
 			}
-			auto &left_rais = left_binding.table->storage->info->rais;
-			auto &right_rais = right_binding.table->storage->info->rais;
+			auto &left_rais = left_binding.table->GetStorage().info->rais;
+			auto &right_rais = right_binding.table->GetStorage().info->rais;
 			bool reorder_condition = false;
 			if (left_rais.size() != 0) {
 				if (BindRAIInfo(join, left_rais, *condition)) {
@@ -211,11 +225,13 @@ void SIPJoinRewriter::DoRewrite(LogicalComparisonJoin &join) {
 }
 
 void SIPJoinRewriter::VisitOperator(LogicalOperator &op) {
-	VisitOperatorChildren(op);
-	if (op.type == LogicalOperatorType::COMPARISON_JOIN && op.op_mark != OpMark::HASH_JOIN) {
-		auto &join = reinterpret_cast<LogicalComparisonJoin &>(op);
-		DoRewrite(join);
-	}
+    VisitOperatorChildren(op);
+    if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && op.op_mark != OpMark::HASH_JOIN) {
+        auto &join = reinterpret_cast<LogicalComparisonJoin &>(op);
+        DoRewrite(join);
+    }
 }
+
+
 
 } // namespace duckdb

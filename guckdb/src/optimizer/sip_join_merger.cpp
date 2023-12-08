@@ -15,7 +15,7 @@ void SIPJoinMerger::VisitOperator(LogicalOperator &op) {
 	// traverse recursively through the operator tree bottom-up
 	VisitOperatorChildren(op);
 	// try merge
-	if (op.type == LogicalOperatorType::COMPARISON_JOIN && op.op_mark == OpMark::SIP_JOIN) {
+	if (op.type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN && op.op_mark == OpMark::SIP_JOIN) {
 		auto &join = reinterpret_cast<LogicalComparisonJoin &>(op);
 		// e.g., A.id = B.id && A.num = B.num && B.id2 = C.id , A -> B -> C cannot be simplified as A -> C
 		if (join.conditions.size() == 1) {
@@ -36,11 +36,11 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 			auto &left_rai_info = left->conditions[0].rais[0];
 			if (left_rai_info->rai == rai_info->rai && left->conditions.size() == 1 &&
 			    left_rai_info->rai_type == RAIType::TARGET_EDGE &&
-			    left->children[1]->type == LogicalOperatorType::GET) {
+			    left->children[1]->type == LogicalOperatorType::LOGICAL_GET) {
 				auto edge_get = reinterpret_cast<LogicalGet *>(left->children[1].get());
 				bool is_mergable = edge_get->column_ids.size() <= 2;
 				for (auto col : edge_get->column_ids) {
-					if (col < edge_get->table->rai_column_index) {
+					if (col < edge_get->GetTable()->rai_column_index) {
 						is_mergable = false;
 						break;
 					}
@@ -57,7 +57,7 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 					    [reinterpret_cast<BoundColumnRefExpression *>(join.conditions[0].left.get())->binding] =
 					        reinterpret_cast<BoundColumnRefExpression *>(join.conditions[0].right.get())->binding;
 					join.conditions[0].left = move(left->conditions[0].left);
-					join.enable_lookup_join = left->enable_lookup_join;
+					// join.enable_lookup_join = left->enable_lookup_join;
 					join.AddChild(move(left->children[1]));
 					join.children[0] = move(left->children[0]);
 					join.op_mark = OpMark::MERGED_SIP_JOIN;
@@ -73,11 +73,11 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 			if (left_rai_info->rai == rai_info->rai && left->conditions.size() == 1 &&
 			    left_rai_info->rai_type == RAIType::SOURCE_EDGE &&
 			    left_rai_info->rai->rai_direction == RAIDirection::UNDIRECTED &&
-			    left->children[1]->type == LogicalOperatorType::GET) {
+			    left->children[1]->type == LogicalOperatorType::LOGICAL_GET) {
 				auto edge_get = reinterpret_cast<LogicalGet *>(left->children[1].get());
 				bool is_mergable = edge_get->column_ids.size() <= 2;
 				for (auto col : edge_get->column_ids) {
-					if (col < edge_get->table->rai_column_index) {
+					if (col < edge_get->GetTable()->rai_column_index) {
 						is_mergable = false;
 						break;
 					}
@@ -94,7 +94,7 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 					    [reinterpret_cast<BoundColumnRefExpression *>(join.conditions[0].left.get())->binding] =
 					        reinterpret_cast<BoundColumnRefExpression *>(join.conditions[0].right.get())->binding;
 					join.conditions[0].left = move(left->conditions[0].left);
-					join.enable_lookup_join = left->enable_lookup_join;
+					// join.enable_lookup_join = left->enable_lookup_join;
 					auto &new_left = left->children[0];
 					auto &merge_child = left->children[1];
 					join.AddChild(move(merge_child));
@@ -111,11 +111,11 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 			auto &right_rai_info = right->conditions[0].rais[0];
 			if (right_rai_info->rai == rai_info->rai && right->conditions.size() == 1 &&
 			    right_rai_info->rai_type == RAIType::EDGE_SOURCE &&
-			    right->children[0]->type == LogicalOperatorType::GET) {
+			    right->children[0]->type == LogicalOperatorType::LOGICAL_GET) {
 				auto edge_get = reinterpret_cast<LogicalGet *>(right->children[0].get());
 				bool is_mergable = edge_get->column_ids.size() <= 2;
 				for (auto col : edge_get->column_ids) {
-					if (col < edge_get->table->rai_column_index) {
+					if (col < edge_get->GetTable()->rai_column_index) {
 						is_mergable = false;
 						break;
 					}
@@ -148,11 +148,11 @@ void SIPJoinMerger::Merge(LogicalComparisonJoin &join) {
 			if (right_rai_info->rai == rai_info->rai && right->conditions.size() == 1 &&
 			    right_rai_info->rai_type == RAIType::EDGE_TARGET &&
 			    right_rai_info->rai->rai_direction == RAIDirection::UNDIRECTED &&
-			    right->children[0]->type == LogicalOperatorType::GET) {
+			    right->children[0]->type == LogicalOperatorType::LOGICAL_GET) {
 				auto edge_get = reinterpret_cast<LogicalGet *>(right->children[0].get());
 				bool is_mergable = edge_get->column_ids.size() <= 2;
 				for (auto col : edge_get->column_ids) {
-					if (col < edge_get->table->rai_column_index) {
+					if (col < edge_get->GetTable()->rai_column_index) {
 						is_mergable = false;
 						break;
 					}

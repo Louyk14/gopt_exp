@@ -18,20 +18,20 @@ namespace duckdb {
 //! every row in a table
 class CheckConstraint : public Constraint {
 public:
-	CheckConstraint(unique_ptr<ParsedExpression> expression)
-	    : Constraint(ConstraintType::CHECK), expression(move(expression)){};
+	static constexpr const ConstraintType TYPE = ConstraintType::CHECK;
+
+public:
+	DUCKDB_API explicit CheckConstraint(unique_ptr<ParsedExpression> expression);
 
 	unique_ptr<ParsedExpression> expression;
 
 public:
-	string ToString() const override;
+	DUCKDB_API string ToString() const override;
 
-	unique_ptr<Constraint> Copy() override;
+	DUCKDB_API unique_ptr<Constraint> Copy() const override;
 
-	//! Serialize to a stand-alone binary blob
-	void Serialize(Serializer &serializer) override;
-	//! Deserializes a CheckConstraint
-	static unique_ptr<Constraint> Deserialize(Deserializer &source);
+	DUCKDB_API void Serialize(Serializer &serializer) const override;
+	DUCKDB_API static unique_ptr<Constraint> Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

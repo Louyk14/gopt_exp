@@ -1,49 +1,40 @@
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 
-#include "duckdb/common/serializer.hpp"
+#include "duckdb/common/limits.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 
-using namespace std;
-using namespace duckdb;
+namespace duckdb {
+
+UniqueConstraint::UniqueConstraint() : Constraint(ConstraintType::UNIQUE), index(DConstants::INVALID_INDEX) {
+}
+
+UniqueConstraint::UniqueConstraint(LogicalIndex index, bool is_primary_key)
+    : Constraint(ConstraintType::UNIQUE), index(index), is_primary_key(is_primary_key) {
+}
+UniqueConstraint::UniqueConstraint(vector<string> columns, bool is_primary_key)
+    : Constraint(ConstraintType::UNIQUE), index(DConstants::INVALID_INDEX), columns(std::move(columns)),
+      is_primary_key(is_primary_key) {
+}
 
 string UniqueConstraint::ToString() const {
-	return is_primary_key ? "PRIMARY KEY constraint" : "UNIQUE Constraint";
-}
-
-unique_ptr<Constraint> UniqueConstraint::Copy() {
-	if (index == INVALID_INDEX) {
-		return make_unique<UniqueConstraint>(columns, is_primary_key);
-	} else {
-		assert(columns.size() == 0);
-		return make_unique<UniqueConstraint>(index, is_primary_key);
-	}
-}
-
-void UniqueConstraint::Serialize(Serializer &serializer) {
-	Constraint::Serialize(serializer);
-	serializer.Write<bool>(is_primary_key);
-	serializer.Write<uint64_t>(index);
-	assert(columns.size() <= numeric_limits<uint32_t>::max());
-	serializer.Write<uint32_t>((uint32_t)columns.size());
-	for (auto &column : columns) {
-		serializer.WriteString(column);
-	}
-}
-
-unique_ptr<Constraint> UniqueConstraint::Deserialize(Deserializer &source) {
-	auto is_primary_key = source.Read<bool>();
-	auto index = source.Read<uint64_t>();
-	auto column_count = source.Read<uint32_t>();
-
-	if (index != INVALID_INDEX) {
-		// single column parsed constraint
-		return make_unique<UniqueConstraint>(index, is_primary_key);
-	} else {
-		// column list parsed constraint
-		vector<string> columns;
-		for (uint32_t i = 0; i < column_count; i++) {
-			auto column_name = source.Read<string>();
-			columns.push_back(column_name);
+	string base = is_primary_key ? "PRIMARY KEY(" : "UNIQUE(";
+	for (idx_t i = 0; i < columns.size(); i++) {
+		if (i > 0) {
+			base += ", ";
 		}
-		return make_unique<UniqueConstraint>(columns, is_primary_key);
+		base += KeywordHelper::WriteOptionallyQuoted(columns[i]);
+	}
+	return base + ")";
+}
+
+unique_ptr<Constraint> UniqueConstraint::Copy() const {
+	if (index.index == DConstants::INVALID_INDEX) {
+		return make_uniq<UniqueConstraint>(columns, is_primary_key);
+	} else {
+		auto result = make_uniq<UniqueConstraint>(index, is_primary_key);
+		result->columns = columns;
+		return std::move(result);
 	}
 }
+
+} // namespace duckdb

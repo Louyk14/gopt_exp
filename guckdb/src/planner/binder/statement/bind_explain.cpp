@@ -2,8 +2,7 @@
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/planner/operator/logical_explain.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
 BoundStatement Binder::Bind(ExplainStatement &stmt) {
 	BoundStatement result;
@@ -12,11 +11,14 @@ BoundStatement Binder::Bind(ExplainStatement &stmt) {
 	auto plan = Bind(*stmt.stmt);
 	// get the unoptimized logical plan, and create the explain statement
 	auto logical_plan_unopt = plan.plan->ToString();
-	auto explain = make_unique<LogicalExplain>(move(plan.plan));
+	auto explain = make_uniq<LogicalExplain>(std::move(plan.plan), stmt.explain_type);
 	explain->logical_plan_unopt = logical_plan_unopt;
 
-	result.plan = move(explain);
+	result.plan = std::move(explain);
 	result.names = {"explain_key", "explain_value"};
-	result.types = {SQLType::VARCHAR, SQLType::VARCHAR};
+	result.types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	properties.return_type = StatementReturnType::QUERY_RESULT;
 	return result;
 }
+
+} // namespace duckdb

@@ -1,60 +1,27 @@
 #include "duckdb/parser/statement/select_statement.hpp"
 
-#include "duckdb/common/assert.hpp"
-#include "duckdb/common/serializer.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
-using namespace duckdb;
-using namespace std;
+namespace duckdb {
 
-unique_ptr<SelectStatement> SelectStatement::Copy() {
-	auto result = make_unique<SelectStatement>();
-	for (auto &cte : cte_map) {
-		result->cte_map[cte.first] = cte.second->Copy();
-	}
-	result->node = node->Copy();
-	return result;
+SelectStatement::SelectStatement(const SelectStatement &other) : SQLStatement(other), node(other.node->Copy()) {
 }
 
-void SelectStatement::Serialize(Serializer &serializer) {
-	// with clauses
-	assert(cte_map.size() <= numeric_limits<uint32_t>::max());
-	serializer.Write<uint32_t>((uint32_t)cte_map.size());
-	for (auto &cte : cte_map) {
-		serializer.WriteString(cte.first);
-		cte.second->Serialize(serializer);
-	}
-	node->Serialize(serializer);
+unique_ptr<SQLStatement> SelectStatement::Copy() const {
+	return unique_ptr<SelectStatement>(new SelectStatement(*this));
 }
 
-unique_ptr<SelectStatement> SelectStatement::Deserialize(Deserializer &source) {
-	auto result = make_unique<SelectStatement>();
-	auto cte_count = source.Read<uint32_t>();
-	for (idx_t i = 0; i < cte_count; i++) {
-		auto name = source.Read<string>();
-		auto statement = QueryNode::Deserialize(source);
-		result->cte_map[name] = move(statement);
-	}
-	result->node = QueryNode::Deserialize(source);
-	return result;
-}
-
-bool SelectStatement::Equals(const SQLStatement *other_) const {
-	if (type != other_->type) {
+bool SelectStatement::Equals(const SQLStatement &other_p) const {
+	if (type != other_p.type) {
 		return false;
 	}
-	auto other = (SelectStatement *)other_;
-	// WITH clauses (CTEs)
-	if (cte_map.size() != other->cte_map.size()) {
-		return false;
-	}
-	for (auto &entry : cte_map) {
-		auto other_entry = other->cte_map.find(entry.first);
-		if (other_entry == other->cte_map.end()) {
-			return false;
-		}
-		if (!entry.second->Equals(other_entry->second.get())) {
-			return false;
-		}
-	}
-	return node->Equals(other->node.get());
+	auto &other = other_p.Cast<SelectStatement>();
+	return node->Equals(other.node.get());
 }
+
+string SelectStatement::ToString() const {
+	return node->ToString();
+}
+
+} // namespace duckdb

@@ -15,23 +15,27 @@ namespace duckdb {
 //! LogicalLimit represents a LIMIT clause
 class LogicalLimit : public LogicalOperator {
 public:
-	LogicalLimit(int64_t limit, int64_t offset)
-	    : LogicalOperator(LogicalOperatorType::LIMIT), limit(limit), offset(offset) {
-	}
-
-	//! The maximum amount of elements to emit
-	int64_t limit;
-	//! The offset from the start to begin emitting elements
-	int64_t offset;
+	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_LIMIT;
 
 public:
-	vector<ColumnBinding> GetColumnBindings() override {
-		return children[0]->GetColumnBindings();
-	}
+	LogicalLimit(int64_t limit_val, int64_t offset_val, unique_ptr<Expression> limit, unique_ptr<Expression> offset);
+
+	//! Limit and offset values in case they are constants, used in optimizations.
+	int64_t limit_val;
+	int64_t offset_val;
+	//! The maximum amount of elements to emit
+	unique_ptr<Expression> limit;
+	//! The offset from the start to begin emitting elements
+	unique_ptr<Expression> offset;
+
+public:
+	vector<ColumnBinding> GetColumnBindings() override;
+	idx_t EstimateCardinality(ClientContext &context) override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer);
 
 protected:
-	void ResolveTypes() override {
-		types = children[0]->types;
-	}
+	void ResolveTypes() override;
 };
 } // namespace duckdb
