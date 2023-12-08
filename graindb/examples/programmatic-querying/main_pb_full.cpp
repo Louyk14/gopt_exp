@@ -155,7 +155,7 @@ void CreateGraphFromSQL(Connection& con, string schema_path="", string load_path
         std::stringstream buffer_constraint;
         buffer_constraint << constraint_file.rdbuf();
         string constraint_sql(buffer_constraint.str());
-        replace_all(constraint_sql, "\n", "");
+        // replace_all(constraint_sql, "\n", "");
         con.Query(constraint_sql);
     }
     constraint_file.close();
@@ -353,12 +353,119 @@ void generate_queries(string query_path, string para_path, std::vector<string>& 
     }
 }
 
+void generate_batch_queries(string query_path, string para_path, std::vector<string>& generated_queries) {
+    int batch_size = 10;
+    vector<string> person_list;
+    std::ifstream para_file_for_p(para_path, std::ios::in);
+    string tmp, tmp_data;
+    std::getline(para_file_for_p, tmp);
+    std::getline(para_file_for_p, tmp);
+
+    while (std::getline(para_file_for_p, tmp_data)) {
+        int pos = 0;
+        int last = 0;
+        int indexer = 0;
+        tmp_data += "|";
+
+        if ((pos = tmp_data.find('|', last)) != std::string::npos) {
+            string token = tmp_data.substr(last, pos - last);
+            person_list.push_back(token);
+        }
+    }
+    para_file_for_p.close();
+
+    std::ifstream para_file(para_path, std::ios::in);
+
+    string schema, type, data;
+    std::getline(para_file, schema);
+    std::cout << schema << std::endl;
+    std::getline(para_file, type);
+    char delimiter = '|';
+    std::vector<string> slots;
+    std::vector<string> data_types;
+
+    schema += delimiter;
+    string cur = "";
+    for (int i = 0; i < schema.size(); ++i) {
+        if (schema[i] == delimiter) {
+            cur = ":" + cur;
+            slots.push_back(cur);
+            cur.clear();
+        }
+        else {
+            cur += schema[i];
+        }
+    }
+
+    type += delimiter;
+    cur.clear();
+    for (int i = 0; i < type.size(); ++i) {
+        if (type[i] == delimiter) {
+            data_types.push_back(cur);
+            cur.clear();
+        }
+        else {
+            cur += type[i];
+        }
+    }
+
+    std::ifstream query_file(query_path, std::ios::in);
+    std::stringstream buffer;
+    buffer << query_file.rdbuf();
+    string query_template(buffer.str());
+    replace_all(query_template, "\n", " ");
+
+    int line_no = 0;
+    while (std::getline(para_file, data)) {
+        int pos = 0;
+        int last = 0;
+        int indexer = 0;
+        data += "|";
+        vector<string> tokenizers;
+
+        string query_template_tmp(query_template);
+        while ((pos = data.find(delimiter, last)) != std::string::npos) {
+            string token = data.substr(last, pos - last);
+            tokenizers.push_back(token);
+            if (data_types[indexer] == "VARCHAR")
+                token = "\'" + token + "\'";
+            if (slots[indexer] == ":durationDays") {
+                long long dur = atoll(token.c_str()) * 86400000;
+                long long end_time = atoll(tokenizers[indexer - 1].c_str()) + dur;
+                token = to_string(end_time);
+            }
+            if (slots[indexer] == ":personId") {
+                string to_replace = "= :personId";
+                string target = "in (";
+                int start_point = line_no;
+                int end_point = min(line_no + batch_size - 1, (int)person_list.size() - 1);
+                if (end_point - line_no + 1 != batch_size) {
+                    start_point = end_point + 1 - batch_size;
+                }
+                for (int p = start_point; p <= end_point; ++p) {
+                    target += person_list[p];
+                    if (p != end_point)
+                        target += ",";
+                    else
+                        target += ")";
+                }
+                replace_all(query_template_tmp, to_replace, target);
+            }
+            else {
+                replace_all(query_template_tmp, slots[indexer], token);
+            }
+            indexer += 1;
+            last = pos + 1;
+        }
+
+        line_no++;
+        generated_queries.push_back(query_template_tmp);
+    }
+}
+
 string get_test_query(int index) {
     if (index == 0) {
-        return "select k2.k_person2id\n"
-               "   from Knows k1, Knows k2\n"
-               "   where\n"
-               "   k1.k_person1id = 1 and k1.k_person2id = k2.k_person1id and k2.k_person2id <> 1;";
+        return "select p_personid, p_firstname, p_lastname, m_messageid, COALESCE(m_ps_imagefile, m_content), m_creationdate from person, message, knows where     p_personid = m_creatorid and m_creationdate <= 1323648000000 and     k_person1id in (10995116287298,6597069777312,24189255819351,17592186045019,10976,15393162792273) and     k_person2id = p_personid order by m_creationdate desc, m_messageid asc limit 20;";
     }
     else if (index == 1) {
         return "select\n"
@@ -439,15 +546,13 @@ string get_test_query(int index) {
                "   (\n"
                "      select m_creatorid as m_c_creatorid, count(*) as ct1 from message, place\n"
                "      where\n"
-               "        m_locationid = pl_placeid and pl_name = 'Mauritania' and\n"
-               "        m_creationdate >= 1296518400000 and  m_creationdate < 1299369600000\n"
+               "        m_locationid = pl_placeid and pl_name = 'Mauritania'\n"
                "      group by m_c_creatorid\n"
                "   ) chn,\n"
                "   (\n"
                "      select m_creatorid as m_c_creatorid, count(*) as ct2 from message, place\n"
                "      where\n"
-               "        m_locationid = pl_placeid and pl_name = 'Liberia' and\n"
-               "        m_creationdate >= 1296518400000 and  m_creationdate < 1299369600000\n"
+               "        m_locationid = pl_placeid and pl_name = 'Liberia'\n"
                "      group by m_creatorid\n"
                "   ) ind\n"
                "  where CHN.m_c_creatorid = IND.m_c_creatorid\n"
@@ -699,7 +804,8 @@ int main(int argc, char** args) {
             con.context->transaction.SetAutoCommit(false);
             con.context->transaction.BeginTransaction();
             // std::cout << i << std::endl;
-            con.context->SetPbParameters(mode, "./output.log");
+           con.context->SetPbParameters(mode, "./query3.0");
+            // con.context->SetPbParameters(mode, "./output.log");
             // con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
             /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
@@ -709,7 +815,7 @@ int main(int argc, char** args) {
             break;*/
             // auto result = con.Query("select count(*) from organisation limit 20;");
             // auto result = con.Query(generated_queries[i]);
-            auto result = con.Query(get_test_query(1));
+            auto result = con.Query(get_test_query(0));
 
             //con.QueryPb(generated_queries[i]);
             /*con.QueryPb("SELECT f.title FROM "

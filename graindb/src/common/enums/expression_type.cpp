@@ -152,6 +152,8 @@ ExpressionType ExpressionTypeFromString(string type) {
         return ExpressionType::COMPARE_BETWEEN;
     else if (type == "OR")
         return ExpressionType::CONJUNCTION_OR;
+    else if (type == "IN")
+        return ExpressionType::COMPARE_IN;
 }
 
 string ExpressionTypeToOperator(ExpressionType type) {
