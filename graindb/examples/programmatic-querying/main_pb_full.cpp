@@ -152,6 +152,7 @@ void CreateGraphFromSQL(Connection& con, string schema_path="", string load_path
 
     std::ifstream constraint_file(constraint_path, std::ios::in);
     if (constraint_file) {
+	std::cout << "BUILD NORMAL INDEX" << std::endl;
         std::stringstream buffer_constraint;
         buffer_constraint << constraint_file.rdbuf();
         string constraint_sql(buffer_constraint.str());
@@ -267,6 +268,7 @@ unique_ptr<PhysicalTableScan> get_scan_function(ClientContext& context, string& 
 
 
 void create_db_conn(DuckDB& db, Connection& con) {
+    std::cout << "BUILD RAI INDEX" << std::endl;
     con.DisableProfiling();
     con.context->transaction.SetAutoCommit(false);
     con.context->transaction.BeginTransaction();
@@ -748,11 +750,12 @@ string get_test_query(int index) {
 
 int main(int argc, char** args) {
     int count_num = 50;
-    int mode = 0;//atoi(args[1]);
-    int start_query_index = 11;//atoi(args[2]);
-    int end_query_index = 12;//atoi(args[3]);
-    //string dataset(args[4]);
-    //string suffix(args[5]);
+    int mode = atoi(args[1]);
+    int start_query_index = atoi(args[2]);
+    int end_query_index = atoi(args[3]);
+    string dataset(args[4]);
+    string suffix(args[5]);
+    string normal_index(args[6]);
     // vector<string> constantval_list;
     // getStringListFromFile("../../../../dataset/ldbc/sf1/person_0_0.csv", 0, count_num, constantval_list);
     // constantval_list.push_back("4398046511870");
@@ -765,22 +768,28 @@ int main(int argc, char** args) {
 
     // std::cout << "Generate Queries Over" << std::endl;
 
-    string schema_path = "../../../resource/schema.sql";
-    string load_path = "../../../resource/load.sql";
-    string constraint_path = "../../../resource/constraints.sql";
-    // string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
-    // string load_path = "../../../../dataset/ldbc-merge/load.sql";
+    // string schema_path = "../../../resource/schema.sql";
+    // string load_path = "../../../resource/load.sql";
+    // string constraint_path = "../../../resource/constraints.sql";
+    string schema_path = "../../../../dataset/ldbc-merge/schema.sql";
+    string load_path = "../../../../dataset/ldbc-merge/load.sql";
+    string constraint_path = "";
+    if (normal_index != "-1")
+    	constraint_path = "../../../../dataset/ldbc-merge/constraints.sql";
 
     DuckDB db(nullptr);
     Connection con(db);
-    // create_db_conn(db, con);
-
+    std::cout << normal_index << " " << constraint_path << std::endl; 
     CreateGraphFromSQL(con, schema_path, load_path, constraint_path);
-    create_db_conn(db, con);
+    if (suffix != "-1")
+    	create_db_conn(db, con);
 
     string suffix_str = "";
-    //if (suffix != "-1")
-    //    suffix_str += "_" + suffix;
+    if (suffix != "-1")
+        suffix_str += "_" + suffix;
+    if (normal_index != "-1")
+        suffix_str += "_" + normal_index;
+
 
     /*std::fstream outfile("output.txt", std::ios::out);
     for (int i = 0; i < generated_queries.size(); ++i)
@@ -791,9 +800,9 @@ int main(int argc, char** args) {
             continue;
         string query_index_str = to_string(query_index);
         vector<string> generated_queries;
-        //string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index_str + ".sql";
-        //string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/" + dataset + "/interactive_" + query_index_str + "_param.txt";
-        //generate_queries(query_path, para_path, generated_queries);
+        string query_path = "../../../../dataset/ldbc-merge/query/queries/interactive-complex-" + query_index_str + ".sql";
+        string para_path = "../../../../dataset/ldbc-merge/query/paras/generated_version/" + dataset + "/interactive_" + query_index_str + "_param.txt";
+        generate_queries(query_path, para_path, generated_queries);
         
     /*std::fstream outfile("output.txt", std::ios::out);
     for (int i = 0; i < generated_queries.size(); ++i)
@@ -803,10 +812,8 @@ int main(int argc, char** args) {
         for (int i = 0; i < 1; ++i) {//generated_queries.size(); ++i) {
             con.context->transaction.SetAutoCommit(false);
             con.context->transaction.BeginTransaction();
-            // std::cout << i << std::endl;
-           con.context->SetPbParameters(mode, "./query3.0");
             // con.context->SetPbParameters(mode, "./output.log");
-            // con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
+            con.context->SetPbParameters(mode, "../../../../output/" + dataset + suffix_str + "/graindb/query" + query_index_str + "." + to_string(i));
             /*auto r1 = con.Query("select string_agg(o2.o_name || '|' || pu_classyear::text || '|' || p2.pl_name, ';')\n"
                             "     from person_university, organisation o2, place p2\n"
                             "    where pu_personid = 6597069767674 and pu_organisationid = o2.o_organisationid and o2.o_placeid =p2.pl_placeid\n"
@@ -825,7 +832,7 @@ int main(int argc, char** args) {
                         + constantval_list[i] + "\'");
             */
             //con.context->transaction.Commit();
-            result->Print();
+            //result->Print();
         }
     }
 }

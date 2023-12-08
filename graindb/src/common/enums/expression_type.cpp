@@ -1,6 +1,7 @@
 #include "duckdb/common/enums/expression_type.hpp"
 
 #include "duckdb/common/exception.hpp"
+#include <iostream>
 
 using namespace std;
 

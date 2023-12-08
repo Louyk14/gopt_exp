@@ -428,17 +428,19 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 		map_key_type_left->set_allocated_child(child_variable_index_left);
 		child_variable_type_left->set_allocated_map_key(map_key_type_left);
 
-		int size_index_left = sip_join->left_keys_size();
-		*sip_join->add_left_keys() = *field_reference_left;
+		// int size_index_left = sip_join->left_keys_size();
+		// *sip_join->add_left_keys() = *field_reference_left;
 		// sip_join->mutable_left_keys()->AddAllocated(field_reference_left);
-		delete field_reference_left;
+		// delete field_reference_left;
 		string* string_val_left = new string(lexp->alias);
 		variable_name_left->set_allocated_string(string_val_left);
 		map_key_variable_left->set_allocated_map_key(variable_name_left);
 		map_key_variable_left->set_allocated_child(child_variable_type_left);
 		direct_reference_left->set_allocated_map_key(map_key_variable_left);
-		sip_join->mutable_left_keys(size_index_left)->set_allocated_direct_reference(direct_reference_left);
-
+		field_reference_left->set_allocated_direct_reference(direct_reference_left);
+		// sip_join->mutable_left_keys(size_index_left)->set_allocated_direct_reference(direct_reference_left);
+		*sip_join->add_left_keys() = *field_reference_left;
+		delete field_reference_left;
 
 		substrait::Expression_FieldReference* field_reference_right = new substrait::Expression_FieldReference();
 		substrait::Expression_ReferenceSegment* direct_reference_right = new substrait::Expression_ReferenceSegment();
@@ -458,16 +460,19 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 		map_key_type_right->set_allocated_child(child_variable_index_right);
 		child_variable_type_right->set_allocated_map_key(map_key_type_right);
 
-		int size_index_right = sip_join->right_keys_size();
-		*sip_join->add_right_keys() = *field_reference_right;
+		// int size_index_right = sip_join->right_keys_size();
+		// *sip_join->add_right_keys() = *field_reference_right;
 		// sip_join->mutable_left_keys()->AddAllocated(field_reference_left);
-		delete field_reference_right;
+		// delete field_reference_right;
 		string* string_val_right = new string(rexp->alias);
 		variable_name_right->set_allocated_string(string_val_right);
 		map_key_variable_right->set_allocated_map_key(variable_name_right);
 		map_key_variable_right->set_allocated_child(child_variable_type_right);
 		direct_reference_right->set_allocated_map_key(map_key_variable_right);
-		sip_join->mutable_right_keys(size_index_right)->set_allocated_direct_reference(direct_reference_right);
+                field_reference_right->set_allocated_direct_reference(direct_reference_right);
+		// sip_join->mutable_right_keys(size_index_right)->set_allocated_direct_reference(direct_reference_right);
+                *sip_join->add_right_keys() = *field_reference_right;
+                delete field_reference_right;
 
 
 		if (!conditions[i].rais.empty()) {
@@ -475,9 +480,9 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 			sip_join->set_rai_name(conditions[i].rais[0]->rai->name);
 			sip_join->set_rai_type(conditions[i].rais[0]->RAITypeToString());
 			sip_join->set_rai_forward(conditions[i].rais[0]->forward);
-            if (conditions[i].rais[0]->RAITypeToString() != "SELF")
-			    sip_join->set_rai_vertex(conditions[i].rais[0]->vertex->name);
-
+			if (conditions[i].rais[0]->RAITypeToString() != "SELF") 
+				sip_join->set_rai_vertex(conditions[i].rais[0]->vertex->name);
+			
 			if (conditions[i].rais[0]->passing_tables[0] != 0)
 				sip_join->add_rai_passing_tables(tableid2name[conditions[i].rais[0]->passing_tables[0]]);
 			else
@@ -487,7 +492,7 @@ substrait::Rel* PhysicalSIPJoin::ToSubstraitClass(unordered_map<int, string>& ta
 				sip_join->add_rai_passing_tables(tableid2name[conditions[i].rais[0]->passing_tables[1]]);
 			else
 				sip_join->add_rai_passing_tables("");
-
+			
 			sip_join->add_rai_left_cardinalities(conditions[i].rais[0]->left_cardinalities[0]);
 			sip_join->add_rai_left_cardinalities(conditions[i].rais[0]->left_cardinalities[1]);
 			sip_join->set_rai_compact_list(conditions[i].rais[0]->compact_list != NULL);
