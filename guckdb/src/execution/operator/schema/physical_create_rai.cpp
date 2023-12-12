@@ -28,7 +28,7 @@ public:
 
 class RAIGlobalSinkState : public GlobalSinkState {
 public:
-    RAIGlobalSinkState(ClientContext &context_p)
+    RAIGlobalSinkState(ClientContext &context_p, const PhysicalCreateRAI& op)
             : context(context_p) {
         vector<LogicalType> types;
         for (int i = 0; i < 3; ++i) {
@@ -40,12 +40,13 @@ public:
 public:
     ClientContext &context;
     DataChunk collection;
+    mutex lock;
 };
 
 
 class RAILocalSinkState : public LocalSinkState {
 public:
-    RAILocalSinkState(ClientContext &context) {
+    RAILocalSinkState(ClientContext &context, const PhysicalCreateRAI& op) {
         vector<LogicalType> types;
         for (int i = 0; i < 3; ++i) {
             types.push_back(LogicalType::BIGINT);
@@ -64,14 +65,14 @@ OperatorResultType PhysicalCreateRAI::ExecuteInternal(ExecutionContext &context,
     auto &state = state_p.Cast<CreateRAIState>();
     auto &sink = sink_state->Cast<RAIGlobalSinkState>();
 
-    int counts = 30;
+    /*int counts = 30;
     UnifiedVectorFormat source_data{}, edges_data{}, target_data{};
     sink.collection.data[0].ToUnifiedFormat(counts, source_data);
     sink.collection.data[1].ToUnifiedFormat(counts, edges_data);
     sink.collection.data[2].ToUnifiedFormat(counts, target_data);
     auto source_ids = UnifiedVectorFormat::GetData<hash_t>(source_data);
     auto edge_ids = UnifiedVectorFormat::GetData<hash_t>(edges_data);
-    auto target_ids = UnifiedVectorFormat::GetData<hash_t>(target_data);
+    auto target_ids = UnifiedVectorFormat::GetData<hash_t>(target_data);*/
 
     assert(children.size() == 1);
     unique_ptr<RAI> rai = make_uniq<RAI>(name, &table, rai_direction, column_ids, referenced_tables, referenced_columns);
@@ -194,17 +195,20 @@ unique_ptr<OperatorState> PhysicalCreateRAI::GetOperatorState(ExecutionContext &
 
 SinkResultType PhysicalCreateRAI::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
     auto &lstate = input.local_state.Cast<RAILocalSinkState>();
+    auto &gstate = input.global_state.Cast<RAIGlobalSinkState>();
 
-    lstate.collection.Append(chunk, true);
+    gstate.collection.Append(chunk, true);
+    // lstate.collection.Append(chunk, true);
 
     return SinkResultType::NEED_MORE_INPUT;
 }
 
 SinkCombineResultType PhysicalCreateRAI::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
-    auto &gstate = input.global_state.Cast<RAIGlobalSinkState>();
-    auto &lstate = input.local_state.Cast<RAILocalSinkState>();
+    // auto &gstate = input.global_state.Cast<RAIGlobalSinkState>();
+    // auto &lstate = input.local_state.Cast<RAILocalSinkState>();
 
-    gstate.collection.Append(lstate.collection, true);
+    // lock_guard<mutex> local_rai_lock(gstate.lock);
+    // gstate.collection.Append(lstate.collection, true);
 
     // EnlargeTable(context, lstate.collection, gstate.collection);
 
@@ -220,11 +224,11 @@ SinkFinalizeType PhysicalCreateRAI::Finalize(Pipeline &pipeline, Event &event, C
 
 
 unique_ptr<GlobalSinkState> PhysicalCreateRAI::GetGlobalSinkState(ClientContext &context) const {
-    return make_uniq<RAIGlobalSinkState>(context);
+    return make_uniq<RAIGlobalSinkState>(context, *this);
 }
 
 unique_ptr<LocalSinkState> PhysicalCreateRAI::GetLocalSinkState(ExecutionContext &context) const {
-    return make_uniq<RAILocalSinkState>(context.client);
+    return make_uniq<RAILocalSinkState>(context.client, *this);
 }
 
 SourceResultType PhysicalCreateRAI::GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const {

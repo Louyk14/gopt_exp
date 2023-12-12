@@ -124,14 +124,15 @@ idx_t LogicalGet::EstimateCardinality(ClientContext &context) {
 ColumnBinding LogicalGet::PushdownColumnBinding(ColumnBinding &binding) {
     column_t referenced_rai = binding.column_index == COLUMN_IDENTIFIER_ROW_ID
                               ? COLUMN_IDENTIFIER_ROW_ID
-                              : this->GetTable()->GetColumns().GetColumn(LogicalIndex(binding.column_index)).GetRAIOid();
+                              : binding.table->GetColumns().GetColumn(LogicalIndex(binding.column_index)).GetRAIOid();
+                              // : this->GetTable()->GetColumns().GetColumn(LogicalIndex(binding.column_index)).GetRAIOid();
     auto entry = find(column_ids.begin(), column_ids.end(), referenced_rai);
     if (entry != column_ids.end()) {
         auto column_idx = distance(column_ids.begin(), entry);
-        return ColumnBinding(table_index, column_idx, referenced_rai, GetTable().get());
+        return ColumnBinding(table_index, column_idx, referenced_rai, binding.table);
     } else {
         column_ids.push_back(referenced_rai);
-        return ColumnBinding(table_index, column_ids.size() - 1, referenced_rai, GetTable().get());
+        return ColumnBinding(table_index, column_ids.size() - 1, referenced_rai, binding.table);
     }
 }
 

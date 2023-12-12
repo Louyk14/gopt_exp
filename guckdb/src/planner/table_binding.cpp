@@ -181,6 +181,8 @@ ColumnBinding TableBinding::GetColumnBinding(column_t column_index) {
 	}
 
 	binding.table_index = index;
+    if (entry)
+        binding.table = &entry->Cast<TableCatalogEntry>();
 	return binding;
 }
 

@@ -223,6 +223,7 @@ namespace duckdb {
         idx_t PrepareKeys(DataChunk &keys, unsafe_unique_array<UnifiedVectorFormat> &key_data,
                           const SelectionVector *&current_sel, SelectionVector &sel, bool build_side);
 
+        mutex test_lock;
         //! Lock for combining data_collection when merging HTs
         mutex data_lock;
         //! Partitioned data collection that the data is sunk into when building

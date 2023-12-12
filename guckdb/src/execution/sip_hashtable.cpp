@@ -369,28 +369,28 @@ namespace duckdb {
         auto key_data = FlatVector::GetData<int64_t>(keys);
         if (use_alist) {
             idx_t chunk_idx_from = 0;
-            idx_t chunk_idx_to = data_collection->Count();
+            idx_t chunk_idx_to = data_collection->ChunkCount();
             TupleDataChunkIterator iterator(*data_collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED,
                                             chunk_idx_from, chunk_idx_to, false);
             const auto row_locations = iterator.GetRowLocations();
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<hash_t>(row_locations[i] + pointer_offset);
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetDataOffset()));
                 }
                 FillBitmaskWithAList(keys, count, rai_info);
             } while (iterator.Next());
         }
         else {
             idx_t chunk_idx_from = 0;
-            idx_t chunk_idx_to = data_collection->Count();
+            idx_t chunk_idx_to = data_collection->ChunkCount();
             TupleDataChunkIterator iterator(*data_collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED,
                                             chunk_idx_from, chunk_idx_to, false);
             const auto row_locations = iterator.GetRowLocations();
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<hash_t>(row_locations[i] + pointer_offset);
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetDataOffset()));
                 }
                 FillBitmaskWithoutAList(keys, count, rai_info);
             } while (iterator.Next());
@@ -400,7 +400,7 @@ namespace duckdb {
     void SIPHashTable::FillBitmaskWithAList(Vector &key_vector, idx_t count, RAIInfo &rai_info) {
         UnifiedVectorFormat key_data;
         key_vector.ToUnifiedFormat(count, key_data);
-        auto *keys =  UnifiedVectorFormat::GetData<hash_t>(key_data);
+        auto *keys = UnifiedVectorFormat::GetData<int64_t>(key_data);
         auto key_nullmask = key_data.validity;
         auto &row_bitmask = *rai_info.row_bitmask;
         auto &zone_bitmask = *rai_info.zone_bitmask;
@@ -444,7 +444,7 @@ namespace duckdb {
     void SIPHashTable::FillBitmaskWithoutAList(Vector &key_vector, idx_t count, RAIInfo &rai_info) {
         UnifiedVectorFormat key_data;
         key_vector.ToUnifiedFormat(count, key_data);
-        auto *keys = UnifiedVectorFormat::GetData<hash_t>(key_data);
+        auto *keys = UnifiedVectorFormat::GetData<int64_t>(key_data);
         auto &row_bitmask = *rai_info.row_bitmask;
         auto &zone_bitmask = *rai_info.zone_bitmask;
 

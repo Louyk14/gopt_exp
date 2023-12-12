@@ -177,13 +177,13 @@ namespace duckdb {
 
     SinkResultType PhysicalSIPJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
         auto &lstate = input.local_state.Cast<SIPJoinLocalSinkState>();
-
         // resolve the join keys for the right chunk
 
         // if (right_projection_map.size() > 0) {
         //    lstate.build_chunk.InitializeEmpty(lstate.hash_table->build_types);
         // }
         // lstate.join_keys.InitializeEmpty(lstate.hash_table->condition_types);
+        lstate.join_keys.Reset();
         lstate.build_executor.Execute(chunk, lstate.join_keys);
 
         auto &rai_info = conditions[0].rais[0];
@@ -196,8 +196,12 @@ namespace duckdb {
                 }
                 lstate.hash_table->Build(lstate.append_state, lstate.join_keys, lstate.build_chunk);
             }
-            else {
+            else if (!build_types.empty()) {
                 lstate.hash_table->Build(lstate.append_state, lstate.join_keys, chunk);
+            }
+            else {
+                lstate.build_chunk.SetCardinality(chunk.size());
+                lstate.hash_table->Build(lstate.append_state, lstate.join_keys, lstate.build_chunk);
             }
         }
 
@@ -543,8 +547,8 @@ namespace duckdb {
                                                              GlobalOperatorState &gstate, OperatorState &state_p) const {
         auto &state = state_p.Cast<SIPJoinOperatorState>();
         auto &sink = sink_state->Cast<SIPJoinGlobalSinkState>();
-                D_ASSERT(sink.finalized);
-                D_ASSERT(!sink.scanned_data);
+        D_ASSERT(sink.finalized);
+        D_ASSERT(!sink.scanned_data);
 
         // some initialization for external hash join
         if (sink.external && !state.initialized) {
@@ -583,7 +587,7 @@ namespace duckdb {
 
 
         // resolve the join keys for the left chunk
-        // state.join_keys.Reset();
+        state.join_keys.Reset();
         state.probe_executor.Execute(input, state.join_keys);
 
         // perform the actual probe

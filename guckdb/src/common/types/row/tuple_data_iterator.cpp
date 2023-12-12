@@ -13,6 +13,9 @@ TupleDataChunkIterator::TupleDataChunkIterator(TupleDataCollection &collection_p
                                                idx_t chunk_idx_from, idx_t chunk_idx_to, bool init_heap_p)
     : collection(collection_p), init_heap(init_heap_p) {
 	state.pin_state.properties = properties;
+    if (chunk_idx_to > collection.ChunkCount()) {
+        int l = 0;
+    }
 	D_ASSERT(chunk_idx_from < chunk_idx_to);
 	D_ASSERT(chunk_idx_to <= collection.ChunkCount());
 	idx_t overall_chunk_index = 0;

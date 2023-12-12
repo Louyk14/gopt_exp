@@ -186,7 +186,7 @@ namespace duckdb {
         auto im_types = chunk.GetTypes();
         im_chunk.Initialize(context.client, im_types);
         // lstate.build_chunk.InitializeEmpty(lstate.hash_table->build_types);
-        // lstate.join_keys.Reset();
+        lstate.join_keys.Reset();
         lstate.build_executor.Execute(chunk, lstate.join_keys);
 
         auto &rai_info = conditions[0].rais[0];
@@ -269,7 +269,7 @@ namespace duckdb {
         lstate.join_keys.data[0].Reference(chunk.data[chunk.ColumnCount() - 1]);
         //	state->rhs_executor.Execute(chunk, state->join_keys);
         if (right_projection_map.size() > 0) {
-            //		build_chunk.Reset();
+            build_chunk.Reset();
             build_chunk.SetCardinality(chunk);
             for (idx_t i = 0; i < right_projection_map.size(); i++) {
                 build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
