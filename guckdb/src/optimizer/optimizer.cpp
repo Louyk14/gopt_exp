@@ -134,6 +134,22 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 		plan = unnest_rewriter.Optimize(std::move(plan));
 	});
 
+    RunOptimizer(OptimizerType::RAI_JOIN_REWRITER, [&]() {
+        SIPJoinRewriter sip_join_rewriter(binder, context);
+        plan = sip_join_rewriter.Rewrite(std::move(plan));
+    });
+
+    // removes unused columns
+    RunOptimizer(OptimizerType::UNUSED_COLUMNS, [&]() {
+        RemoveUnusedColumns unused(binder, context, true);
+        unused.VisitOperator(*plan);
+    });
+
+    RunOptimizer(OptimizerType::RAI_JOIN_MERGE, [&]() {
+        SIPJoinMerger sip_join_merger(binder, context);
+        plan = sip_join_merger.Rewrite(std::move(plan));
+    });
+
 	// Remove duplicate groups from aggregates
 	RunOptimizer(OptimizerType::DUPLICATE_GROUPS, [&]() {
 		RemoveDuplicateGroups remove;
@@ -159,22 +175,6 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 		propagator.PropagateStatistics(plan);
 		statistics_map = propagator.GetStatisticsMap();
 	});
-
-    RunOptimizer(OptimizerType::RAI_JOIN_REWRITER, [&]() {
-        SIPJoinRewriter sip_join_rewriter(binder, context);
-        plan = sip_join_rewriter.Rewrite(std::move(plan));
-    });
-
-    RunOptimizer(OptimizerType::RAI_JOIN_MERGE, [&]() {
-        SIPJoinMerger sip_join_merger(binder, context);
-        plan = sip_join_merger.Rewrite(std::move(plan));
-    });
-
-    // removes unused columns
-    RunOptimizer(OptimizerType::UNUSED_COLUMNS, [&]() {
-        RemoveUnusedColumns unused(binder, context, true);
-        unused.VisitOperator(*plan);
-    });
 
 	// remove duplicate aggregates
 	RunOptimizer(OptimizerType::COMMON_AGGREGATE, [&]() {

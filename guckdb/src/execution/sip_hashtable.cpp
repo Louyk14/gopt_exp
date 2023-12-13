@@ -376,7 +376,7 @@ namespace duckdb {
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetDataOffset()));
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
                 }
                 FillBitmaskWithAList(keys, count, rai_info);
             } while (iterator.Next());
@@ -390,7 +390,7 @@ namespace duckdb {
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetDataOffset()));
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
                 }
                 FillBitmaskWithoutAList(keys, count, rai_info);
             } while (iterator.Next());

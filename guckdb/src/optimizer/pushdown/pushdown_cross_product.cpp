@@ -46,9 +46,11 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownCrossProduct(unique_ptr<Logi
 		                                             left_bindings, right_bindings, join_expressions, conditions,
 		                                             arbitrary_expressions);
 		// create the join from the join conditions
-		return LogicalComparisonJoin::CreateJoin(GetContext(), JoinType::INNER, JoinRefType::REGULAR,
+		auto result_op = LogicalComparisonJoin::CreateJoin(GetContext(), JoinType::INNER, JoinRefType::REGULAR,
 		                                         std::move(op->children[0]), std::move(op->children[1]),
 		                                         std::move(conditions), std::move(arbitrary_expressions));
+        result_op->op_mark = op->op_mark;
+        return result_op;
 	} else {
 		// no join conditions found: keep as cross product
 		return op;

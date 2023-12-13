@@ -65,19 +65,29 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownJoin(unique_ptr<LogicalOpera
 	LogicalJoin::GetTableReferences(*op->children[0], left_bindings);
 	LogicalJoin::GetTableReferences(*op->children[1], right_bindings);
 
-	switch (join.join_type) {
-	case JoinType::INNER:
-		return PushdownInnerJoin(std::move(op), left_bindings, right_bindings);
-	case JoinType::LEFT:
-		return PushdownLeftJoin(std::move(op), left_bindings, right_bindings);
-	case JoinType::MARK:
-		return PushdownMarkJoin(std::move(op), left_bindings, right_bindings);
-	case JoinType::SINGLE:
-		return PushdownSingleJoin(std::move(op), left_bindings, right_bindings);
-	default:
-		// unsupported join type: stop pushing down
-		return FinishPushdown(std::move(op));
-	}
+    if (op->op_mark == OpMark::SIP_JOIN || op->op_mark == OpMark::MERGED_SIP_JOIN) {
+        if (join.join_type == JoinType::INNER) {
+            return PushdownInnerJoin(std::move(op), left_bindings, right_bindings);
+        }
+        else {
+            return FinishPushdown(std::move(op));
+        }
+    }
+    else {
+        switch (join.join_type) {
+            case JoinType::INNER:
+                return PushdownInnerJoin(std::move(op), left_bindings, right_bindings);
+            case JoinType::LEFT:
+                return PushdownLeftJoin(std::move(op), left_bindings, right_bindings);
+            case JoinType::MARK:
+                return PushdownMarkJoin(std::move(op), left_bindings, right_bindings);
+            case JoinType::SINGLE:
+                return PushdownSingleJoin(std::move(op), left_bindings, right_bindings);
+            default:
+                // unsupported join type: stop pushing down
+                return FinishPushdown(std::move(op));
+        }
+    }
 }
 void FilterPushdown::PushFilters() {
 	for (auto &f : filters) {
