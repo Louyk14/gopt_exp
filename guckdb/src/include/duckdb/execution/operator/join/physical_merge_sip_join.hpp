@@ -53,7 +53,7 @@ namespace duckdb {
         unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 
         bool ParallelOperator() const override {
-            return false;
+            return true;
         }
 
     protected:
@@ -73,7 +73,7 @@ namespace duckdb {
         }
 
         bool ParallelSource() const override {
-            return false;
+            return true;
         }
 
     public:
@@ -90,7 +90,7 @@ namespace duckdb {
             return true;
         }
         bool ParallelSink() const override {
-            return false;
+            return true;
         }
     };
 
