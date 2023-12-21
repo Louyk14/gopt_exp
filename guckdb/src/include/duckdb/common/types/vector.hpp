@@ -325,6 +325,7 @@ struct FlatVector {
 		D_ASSERT(vector.GetVectorType() == VectorType::FLAT_VECTOR);
 		return !vector.validity.RowIsValid(idx);
 	}
+    static const sel_t incremental_vector[STANDARD_VECTOR_SIZE];
 	DUCKDB_API static const SelectionVector *IncrementalSelectionVector();
 };
 

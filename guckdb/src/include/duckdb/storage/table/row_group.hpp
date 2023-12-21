@@ -17,6 +17,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/storage/table/segment_base.hpp"
 #include "duckdb/storage/block.hpp"
+#include "scan_state.hpp"
 
 namespace duckdb {
 class AttachedDatabase;
@@ -94,7 +95,7 @@ public:
 	bool CheckZonemap(TableFilterSet &filters, const vector<column_t> &column_ids);
 	//! Checks the given set of table filters against the per-segment statistics. Returns false if any segments were
 	//! skipped.
-	bool CheckZonemapSegments(CollectionScanState &state);
+	bool CheckZonemapSegments(CollectionScanState &state, idx_t& current_row, SelectionVector &valid_sel, idx_t &sel_count);
 	void Scan(TransactionData transaction, CollectionScanState &state, DataChunk &result);
 	void ScanCommitted(CollectionScanState &state, DataChunk &result, TableScanType type);
 
@@ -164,6 +165,14 @@ private:
 	vector<MetaBlockPointer> CheckpointDeletes(MetadataManager &manager);
 
 	bool HasUnloadedDeletes() const;
+
+    //! Perform lookup
+    template <class T>
+    idx_t inline LookupRows(shared_ptr<ColumnData> column, const shared_ptr<std::vector<row_t>> &rowids, Vector &result,
+                           idx_t offset, idx_t count, idx_t type_size = sizeof(T));
+
+    idx_t PerformLookups(TransactionData transaction, CollectionScanState &state, DataChunk &result,
+                        shared_ptr<std::vector<row_t>> &rowids, idx_t offset, idx_t &new_num, idx_t size);
 
 private:
 	mutex row_group_lock;

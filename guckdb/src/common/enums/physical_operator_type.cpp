@@ -65,6 +65,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
         return "MERGE_SIP_JOIN";
 	case PhysicalOperatorType::INDEX_JOIN:
 		return "INDEX_JOIN";
+    case PhysicalOperatorType::LOOKUP:
+        return "LOOKUP";
 	case PhysicalOperatorType::PIECEWISE_MERGE_JOIN:
 		return "PIECEWISE_MERGE_JOIN";
 	case PhysicalOperatorType::IE_JOIN:

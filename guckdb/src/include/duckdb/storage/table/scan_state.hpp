@@ -138,18 +138,25 @@ public:
 	bool ScanCommitted(DataChunk &result, TableScanType type);
 	bool ScanCommitted(DataChunk &result, SegmentLock &l, TableScanType type);
 
-private:
+// private:
 	TableScanState &parent;
 };
 
 class TableScanState {
 public:
-	TableScanState() : table_state(*this), local_state(*this), table_filters(nullptr) {};
+	TableScanState() : table_state(*this), local_state(*this), table_filters(nullptr), rowids(nullptr),
+                        zones(nullptr), zones_sel(nullptr) {};
 
 	//! The underlying table scan state
 	CollectionScanState table_state;
 	//! Transaction-local scan state
 	CollectionScanState local_state;
+
+    shared_ptr<rows_vector> rowids;
+    shared_ptr<bitmask_vector> zones;
+    shared_ptr<bitmask_vector> zones_sel;
+    idx_t rows_offset = 0;
+    row_t rows_count = -1;
 
 public:
 	void Initialize(vector<storage_t> column_ids, TableFilterSet *table_filters = nullptr);
@@ -158,7 +165,7 @@ public:
 	TableFilterSet *GetFilters();
 	AdaptiveFilter *GetAdaptiveFilter();
 
-private:
+public:
 	//! The column identifiers of the scan
 	vector<storage_t> column_ids;
 	//! The table filters (if any)

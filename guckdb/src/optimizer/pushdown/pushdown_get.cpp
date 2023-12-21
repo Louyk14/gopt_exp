@@ -53,7 +53,11 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 
 	//! We generate the table filters that will be executed during the table scan
 	//! Right now this only executes simple AND filters
-	get.table_filters = combiner.GenerateTableScanFilters(get.column_ids);
+    vector<unique_ptr<Expression>> expr_list;
+	get.table_filters = combiner.GenerateTableScanFilters(get.column_ids, get.expressions);
+
+    if (get.table_filters.filters.size() != 0)
+        int p = 0;
 
 	// //! For more complex filters if all filters to a column are constants we generate a min max boundary used to
 	// check

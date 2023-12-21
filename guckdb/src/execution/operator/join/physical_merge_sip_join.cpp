@@ -92,13 +92,14 @@ namespace duckdb {
     public:
         MergeSIPJoinLocalSinkState(const PhysicalMergeSIPJoin &op, ClientContext &context) : build_executor(context) {
             auto &allocator = BufferAllocator::Get(context);
-            if (!op.right_projection_map.empty()) {
+            // if (!op.right_projection_map.empty()) {
                 build_chunk.Initialize(allocator, op.build_types);
-            }
+            // }
             for (auto &cond : op.conditions) {
                 build_executor.AddExpression(*cond.right);
             }
             join_keys.Initialize(allocator, op.condition_types);
+            right_condition_chunk.Initialize(allocator, op.condition_types);
 
             hash_table = op.InitializeHashTable(context);
 
@@ -114,6 +115,8 @@ namespace duckdb {
 
         //! Thread-local HT
         unique_ptr<SIPHashTable> hash_table;
+        // state for NLAJoin
+        DataChunk right_condition_chunk;
     };
 
     unique_ptr<SIPHashTable> PhysicalMergeSIPJoin::InitializeHashTable(ClientContext &context) const {
@@ -184,10 +187,11 @@ namespace duckdb {
         idx_t build_side_size = 0;
         DataChunk im_chunk;
         auto im_types = chunk.GetTypes();
+        im_types.push_back(LogicalType::BIGINT);
         im_chunk.Initialize(context.client, im_types);
         // lstate.build_chunk.InitializeEmpty(lstate.hash_table->build_types);
         lstate.join_keys.Reset();
-        lstate.build_executor.Execute(chunk, lstate.join_keys);
+        lstate.build_executor.Execute(chunk, lstate.right_condition_chunk);
 
         auto &rai_info = conditions[0].rais[0];
         idx_t right_tuple = 0;
@@ -195,7 +199,7 @@ namespace duckdb {
         if (chunk.size() != 0) {
             build_side_size += chunk.size();
             do {
-                rai_info->rai->GetVertexes(chunk, lstate.join_keys, im_chunk, left_tuple,
+                rai_info->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
                                            right_tuple, rai_info->forward);
                 AppendHTBlocks(lstate, im_chunk, lstate.build_chunk);
             } while (right_tuple < chunk.size());
@@ -274,14 +278,17 @@ namespace duckdb {
             for (idx_t i = 0; i < right_projection_map.size(); i++) {
                 build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
             }
-        } else {
+            lstate.hash_table->Build(lstate.append_state, lstate.join_keys, build_chunk);
+        }
+        else {
             //		build_chunk.Reset();
             build_chunk.SetCardinality(chunk);
             for (idx_t i = 0; i < build_chunk.ColumnCount(); i++) {
                 build_chunk.data[i].Reference(chunk.data[i]);
             }
+            lstate.hash_table->Build(lstate.append_state, lstate.join_keys, build_chunk);
         }
-        lstate.hash_table->Build(lstate.append_state, lstate.join_keys, build_chunk);
+
     }
 
 //===--------------------------------------------------------------------===//

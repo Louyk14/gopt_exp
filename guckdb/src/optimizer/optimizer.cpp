@@ -169,12 +169,12 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	});
 
 	// perform statistics propagation
-	column_binding_map_t<unique_ptr<BaseStatistics>> statistics_map;
+	/*column_binding_map_t<unique_ptr<BaseStatistics>> statistics_map;
 	RunOptimizer(OptimizerType::STATISTICS_PROPAGATION, [&]() {
 		StatisticsPropagator propagator(*this);
 		propagator.PropagateStatistics(plan);
 		statistics_map = propagator.GetStatisticsMap();
-	});
+	});*/
 
 	// remove duplicate aggregates
 	RunOptimizer(OptimizerType::COMMON_AGGREGATE, [&]() {
@@ -189,10 +189,10 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	});
 
 	// compress data based on statistics for materializing operators
-	RunOptimizer(OptimizerType::COMPRESSED_MATERIALIZATION, [&]() {
+	/*RunOptimizer(OptimizerType::COMPRESSED_MATERIALIZATION, [&]() {
 		CompressedMaterialization compressed_materialization(context, binder, std::move(statistics_map));
 		compressed_materialization.Compress(plan);
-	});
+	});*/
 
 	// transform ORDER BY + LIMIT to TopN
 	RunOptimizer(OptimizerType::TOP_N, [&]() {

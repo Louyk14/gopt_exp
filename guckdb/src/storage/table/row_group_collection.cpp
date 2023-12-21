@@ -96,7 +96,6 @@ shared_ptr<RowGroupCollection> RowGroupCollection::CreateAppendColumnRAI(int& co
     auto result =
             make_shared<RowGroupCollection>(info, block_manager, std::move(new_types), row_start, total_rows.load());
 
-
     idx_t current_total_rows = 0;
     idx_t offset = 0;
     Vector new_vector(vector);
@@ -493,7 +492,10 @@ void RowGroupCollection::RevertAppendInternal(idx_t start_row, idx_t count) {
 }
 
 void RowGroupCollection::MergeStorage(RowGroupCollection &data) {
-	D_ASSERT(data.types == types);
+	if (data.types != types) {
+        int to_stop = 0;
+    }
+    D_ASSERT(data.types == types);
 	auto index = row_start + total_rows.load();
 	auto segments = data.row_groups->MoveSegments();
 	for (auto &entry : segments) {

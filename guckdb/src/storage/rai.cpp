@@ -19,7 +19,9 @@ void RAI::GetChunk(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_
 
 void RAI::GetVertexes(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_chunk, idx_t &left_tuple,
                       idx_t &right_tuple, bool forward) const {
-	assert(new_chunk.ColumnCount() == right_chunk.ColumnCount() + 1);
+	if (new_chunk.ColumnCount() != right_chunk.ColumnCount() + 1)
+        int to_stop = 0;
+    assert(new_chunk.ColumnCount() == right_chunk.ColumnCount() + 1);
 	SelectionVector rvector(STANDARD_VECTOR_SIZE);
 	auto matched_count = alist->FetchVertexes(left_tuple, right_tuple, rid_chunk.data[0], rid_chunk.size(), rvector,
 	                                          new_chunk.data[right_chunk.ColumnCount()], forward);

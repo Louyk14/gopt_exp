@@ -16,6 +16,9 @@
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/storage/table/column_data.hpp"
+#include "duckdb/common/types/validity_mask.hpp"
+#include "duckdb/storage/table/row_group_segment_tree.hpp"
 
 namespace duckdb {
 
@@ -26,10 +29,25 @@ bool TableScanParallelStateNext(ClientContext &context, const FunctionData *bind
                                 LocalTableFunctionState *local_state, GlobalTableFunctionState *gstate);
 
 struct TableScanLocalState : public LocalTableFunctionState {
+    TableScanLocalState(Vector *rid = nullptr): rid_vector(rid), rai_chunk(nullptr), table_filters(nullptr), executor(nullptr), initialized(false), rows_count(-1), sel(nullptr) {
+
+    }
+    bool initialized;
 	//! The current position in the scan
 	TableScanState scan_state;
 	//! The DataChunk containing all read columns (even filter columns that are immediately removed)
 	DataChunk all_columns;
+    //! rid_vector
+    Vector *rid_vector;
+    DataChunk *rai_chunk;
+    //! rows_count
+    shared_ptr<rows_vector> rows_filter;
+    shared_ptr<bitmask_vector> row_bitmask;
+    shared_ptr<bitmask_vector> zone_bitmask;
+    row_t rows_count;
+    TableFilterSet* table_filters;
+    ExpressionExecutor* executor;
+    SelectionVector *sel;
 };
 
 static storage_t GetStorageIndex(TableCatalogEntry &table, column_t column_id) {
@@ -77,6 +95,22 @@ static unique_ptr<LocalTableFunctionState> TableScanInitLocal(ExecutionContext &
 		auto &tsgs = gstate->Cast<TableScanGlobalState>();
 		result->all_columns.Initialize(context.client, tsgs.scanned_types);
 	}
+
+    result->rid_vector = input.input_rai.rid_vector;
+    result->rai_chunk = input.input_rai.rai_chunk;
+    result->rows_filter = input.input_rai.rows_filter;
+    result->row_bitmask = input.input_rai.row_bitmask;
+    result->zone_bitmask = input.input_rai.zone_bitmask;
+    result->rows_count = input.input_rai.rows_count;
+    result->table_filters = input.input_rai.table_filters;
+    result->executor = input.input_rai.executor.get();
+    result->sel = input.input_rai.sel;
+
+    result->scan_state.zones = result->row_bitmask;
+    result->scan_state.zones_sel = result->zone_bitmask;
+    result->scan_state.rows_count = result->rows_count;
+    result->scan_state.rowids = result->rows_filter;
+
 	return std::move(result);
 }
 
@@ -111,6 +145,121 @@ static unique_ptr<BaseStatistics> TableScanStatistics(ClientContext &context, co
 	return bind_data.table.GetStatistics(context, column_id);
 }
 
+void PerformSeqScan(DuckTransaction &transaction, DataChunk &chunk, TableScanLocalState &state, DataTable& storage) {
+    /*if (!state.initialized) {
+        if (state.rows_count != -1) {
+            storage.InitializeScan(state.scan_state, state.scan_state.column_ids, state.rows_filter,
+                                   state.rows_count, state.table_filters);
+        } else if (state.row_bitmask) {
+            storage.InitializeScan(state.scan_state, state.scan_state.column_ids, state.row_bitmask,
+                                   state.zone_bitmask, state.table_filters);
+        } else {
+            storage.InitializeScan(transaction, state.scan_state, state.scan_state.column_ids, state.table_filters);
+        }
+        state.initialized = true;
+    }*/
+    storage.Scan(transaction, chunk, state.scan_state);
+}
+
+template <class T> static void Lookup(shared_ptr<RowGroupSegmentTree>& row_groups, row_t *row_ids, Vector &result, idx_t count, idx_t col_index) {
+    auto result_data = FlatVector::GetData(result);
+    auto type_size = sizeof(T);
+
+    idx_t s_size = row_groups->GetRootSegment()->count;
+    for (idx_t i = 0; i < count; i++) {
+        row_t row_id = row_ids[i];
+        idx_t s_index = row_id / s_size;
+        idx_t s_offset = row_id % s_size;
+        idx_t vector_index = s_offset / STANDARD_VECTOR_SIZE;
+        idx_t id_in_vector = s_offset - vector_index * STANDARD_VECTOR_SIZE;
+        // get segment buffer
+        ColumnData& column = row_groups->GetSegment(s_index)->GetColumn(col_index);
+        auto transient_segment = (ColumnSegment *) column.data.GetSegment(vector_index);
+        auto s_base = transient_segment->block->buffer->buffer;
+        auto s_data = s_base + ValidityMask::STANDARD_MASK_SIZE;
+        memcpy(result_data + (i * type_size), s_data + (id_in_vector * type_size), type_size);
+    }
+}
+
+void PerformLookup(DuckTransaction &transaction, DataChunk &chunk, TableScanLocalState& state, SelectionVector *sel,
+                   Vector *rid_vector, DataChunk *rai_chunk, DataTable& table) {
+    auto fetch_count = rai_chunk->size();
+    if (fetch_count == 0) {
+        return;
+    }
+    // perform lookups
+    auto row_ids = FlatVector::GetData<row_t>(*rid_vector);
+    vector<column_t> rai_columns;
+    chunk.SetCardinality(fetch_count);
+    for (idx_t col_idx = 0; col_idx < state.scan_state.column_ids.size(); col_idx++) {
+        auto col = state.scan_state.column_ids[col_idx];
+        if (col == COLUMN_IDENTIFIER_ROW_ID) {
+            chunk.data[col_idx].Reference(*rid_vector);
+        } else {
+            auto column_type = table.column_definitions[col].GetType();
+            if (column_type == LogicalType::TINYINT) {
+                Lookup<int8_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::TINYINT) {
+                Lookup<int8_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::UTINYINT) {
+                Lookup<uint8_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::SMALLINT) {
+                Lookup<int16_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::HASH || column_type == LogicalType::USMALLINT) {
+                Lookup<uint16_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::INTEGER) {
+                Lookup<int32_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::UINTEGER) {
+                Lookup<uint32_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::TIMESTAMP || column_type == LogicalType::BIGINT) {
+                Lookup<int64_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::UBIGINT) {
+                Lookup<uint64_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::FLOAT) {
+                Lookup<float_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::DOUBLE) {
+                Lookup<double_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else if (column_type == LogicalType::POINTER) {
+                Lookup<uintptr_t>(table.row_groups->row_groups, row_ids, chunk.data[col_idx], fetch_count, col);
+            }
+            else {
+                //for (idx_t i = 0; i < size; i++) {
+                //    this->GetColumn(cid).FetchRow(transaction, state, rowids->operator[](i + offset), result.data[col_idx], i);
+                //}
+            }
+        }
+    }
+    // filter
+    SelectionVector filter_sel(fetch_count);
+    auto result_count = fetch_count;
+    if (state.table_filters->filters.size() > 0) {
+        result_count = state.executor->SelectExpression(chunk, filter_sel);
+    }
+#if ENABLE_PROFILING
+    lookup_size += result_count;
+#endif
+    if (result_count == fetch_count) {
+        // nothing was filtered: skip adding any selection vectors
+        return;
+    }
+    // slice
+    chunk.Slice(filter_sel, result_count);
+    auto sel_data = sel->Slice(filter_sel, result_count);
+    sel->Initialize(move(sel_data));
+}
+
+
 static void TableScanFunc(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &bind_data = data_p.bind_data->Cast<TableScanBindData>();
 	auto &gstate = data_p.global_state->Cast<TableScanGlobalState>();
@@ -123,11 +272,23 @@ static void TableScanFunc(ClientContext &context, TableFunctionInput &data_p, Da
 			                        TableScanType::TABLE_SCAN_COMMITTED_ROWS_OMIT_PERMANENTLY_DELETED);
 		} else if (gstate.CanRemoveFilterColumns()) {
 			state.all_columns.Reset();
-			storage.Scan(transaction, state.all_columns, state.scan_state);
+            if (state.rid_vector == nullptr) {
+                PerformSeqScan(transaction, state.all_columns, state, storage);
+            }
+            else {
+                PerformLookup(transaction, state.all_columns, state, state.sel, state.rid_vector, state.rai_chunk, storage);
+            }
+			// storage.Scan(transaction, state.all_columns, state.scan_state);
 			output.ReferenceColumns(state.all_columns, gstate.projection_ids);
-		} else {
-			storage.Scan(transaction, output, state.scan_state);
 		}
+        else {
+            //storage.Scan(transaction, output, state.scan_state);
+            if (state.rid_vector == nullptr) {
+                PerformSeqScan(transaction, output, state, storage);
+            } else {
+                PerformLookup(transaction, output, state, state.sel, state.rid_vector, state.rai_chunk, storage);
+            }
+        }
 		if (output.size() > 0) {
 			return;
 		}
@@ -197,6 +358,7 @@ unique_ptr<NodeStatistics> TableScanCardinality(ClientContext &context, const Fu
 	idx_t estimated_cardinality = storage.info->cardinality + local_storage.AddedRows(bind_data.table.GetStorage());
 	return make_uniq<NodeStatistics>(storage.info->cardinality, estimated_cardinality);
 }
+
 
 //===--------------------------------------------------------------------===//
 // Index Scan

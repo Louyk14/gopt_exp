@@ -20,6 +20,7 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
+#include "duckdb/storage/table/row_group_segment_tree.hpp"
 
 namespace duckdb {
 
@@ -384,7 +385,41 @@ bool RowGroup::CheckZonemap(TableFilterSet &filters, const vector<storage_t> &co
 	return true;
 }
 
-bool RowGroup::CheckZonemapSegments(CollectionScanState &state) {
+bool RowGroup::CheckZonemapSegments(CollectionScanState &state, idx_t& current_row, SelectionVector &valid_sel, idx_t &sel_count) {
+    if (state.parent.zones) {
+        auto &current_zones = *state.parent.zones;
+        auto zone_id = (state.row_group->start + current_row) / STANDARD_VECTOR_SIZE;
+
+        if ((state.row_group->start + current_row) % STANDARD_VECTOR_SIZE == 0) {
+            auto zone_count = MinValue<idx_t>(state.parent.zones_sel->operator[](zone_id) * STANDARD_VECTOR_SIZE, state.max_row_group_row - current_row);
+            sel_count = 0;
+            for (uint16_t i = 0; i < zone_count; i++) {
+                valid_sel.set_index(sel_count, i);
+                sel_count += current_zones[i + state.row_group->start + current_row];
+            }
+        }
+        else {
+            auto num_zone_1 = MinValue<idx_t>(state.max_row_group_row - current_row, (zone_id + 1) * STANDARD_VECTOR_SIZE - current_row - state.row_group->start);
+            auto zone_count_1 = MinValue<idx_t>(state.parent.zones_sel->operator[](zone_id) * STANDARD_VECTOR_SIZE, num_zone_1);
+            idx_t num_zone_2 = 0;
+            idx_t zone_count_2 = 0;
+            if (num_zone_1 < state.max_row_group_row - current_row) {
+                num_zone_2 = MinValue<idx_t>(state.row_group->start + state.row_group->count - (zone_id + 1) * STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE - num_zone_1);
+                zone_count_2 = MinValue<idx_t>(state.parent.zones_sel->operator[](zone_id + 1) * STANDARD_VECTOR_SIZE, num_zone_2);
+            }
+
+            sel_count = 0;
+            for (uint16_t i = 0; i < zone_count_1; i++) {
+                valid_sel.set_index(sel_count, i);
+                sel_count += current_zones[i + state.row_group->start + current_row];
+            }
+            for (uint16_t i = num_zone_1; i < num_zone_1 + zone_count_2; i++) {
+                valid_sel.set_index(sel_count, i);
+                sel_count += current_zones[i + state.row_group->start + current_row];
+            }
+        }
+    }
+
 	auto &column_ids = state.GetColumnIds();
 	auto filters = state.GetFilters();
 	if (!filters) {
@@ -420,6 +455,90 @@ bool RowGroup::CheckZonemapSegments(CollectionScanState &state) {
 	return true;
 }
 
+template <class T>
+idx_t inline RowGroup::LookupRows(shared_ptr<ColumnData> column, const shared_ptr<std::vector<row_t>> &rowids,
+                                      Vector &result, idx_t offset, idx_t count, idx_t type_size) {
+    auto result_data = FlatVector::GetData(result);
+    idx_t new_num = 0;
+    idx_t s_size = this->GetCollection().GetRowGroup(0)->count;
+    for (idx_t i = 0; i < count; i++) {
+        row_t row_id = rowids->operator[](i + offset);
+        if (row_id >= this->start + this->count) {
+            return new_num;
+        }
+        idx_t s_offset = row_id - this->start;
+        idx_t vector_index = s_offset / STANDARD_VECTOR_SIZE;
+        idx_t id_in_vector = s_offset - vector_index * STANDARD_VECTOR_SIZE;
+
+        auto transient_segment = (ColumnSegment *) column->data.GetSegment(vector_index);
+        auto s_data = transient_segment->block->buffer->buffer + ValidityMask::STANDARD_MASK_SIZE;
+        memcpy(result_data + (i * type_size), s_data + (id_in_vector * type_size), type_size);
+        new_num++;
+    }
+
+    return new_num;
+}
+
+idx_t RowGroup::PerformLookups(TransactionData transaction, CollectionScanState &state, DataChunk &result,
+                              shared_ptr<std::vector<row_t>> &rowids, idx_t offset, idx_t& new_num, idx_t size) {
+    for (idx_t col_idx = 0; col_idx < state.parent.column_ids.size(); col_idx++) {
+        auto cid = state.parent.column_ids[col_idx];
+        if (cid == COLUMN_IDENTIFIER_ROW_ID) {
+            assert(result.data[col_idx].GetType() == LogicalType::BIGINT);
+            result.data[col_idx].SetVectorType(VectorType::FLAT_VECTOR);
+            auto data = FlatVector::GetData(result.data[col_idx]);
+            memcpy(data, (data_ptr_t) rowids->data() + (offset * sizeof(int64_t)), size * sizeof(int64_t));
+            continue;
+        }
+
+        auto col = columns[cid];
+        if (col->type == LogicalType::TINYINT) {
+            new_num = LookupRows<int8_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::TINYINT) {
+            new_num = LookupRows<int8_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::UTINYINT) {
+            new_num = LookupRows<uint8_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::SMALLINT) {
+            new_num = LookupRows<int16_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::HASH || col->type == LogicalType::USMALLINT) {
+            new_num = LookupRows<uint16_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::INTEGER) {
+            new_num = LookupRows<int32_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::UINTEGER) {
+            new_num = LookupRows<uint32_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::TIMESTAMP || col->type == LogicalType::BIGINT) {
+            new_num = LookupRows<int64_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::UBIGINT) {
+            new_num = LookupRows<uint64_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::FLOAT) {
+            new_num = LookupRows<float_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::DOUBLE) {
+            new_num = LookupRows<double_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else if (col->type == LogicalType::POINTER) {
+            new_num = LookupRows<uintptr_t>(col, state.parent.rowids, result.data[col_idx], offset, size);
+        }
+        else {
+            //for (idx_t i = 0; i < size; i++) {
+            //    this->GetColumn(cid).FetchRow(transaction, state, rowids->operator[](i + offset), result.data[col_idx], i);
+            //}
+        }
+    }
+
+    return new_num;
+}
+
+
 template <TableScanType TYPE>
 void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &state, DataChunk &result) {
 	const bool ALLOW_UPDATES = TYPE != TableScanType::TABLE_SCAN_COMMITTED_ROWS_DISALLOW_UPDATES &&
@@ -427,23 +546,42 @@ void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &s
 	auto table_filters = state.GetFilters();
 	const auto &column_ids = state.GetColumnIds();
 	auto adaptive_filter = state.GetAdaptiveFilter();
+
 	while (true) {
 		if (state.vector_index * STANDARD_VECTOR_SIZE >= state.max_row_group_row) {
 			// exceeded the amount of rows to scan
 			return;
 		}
-		idx_t current_row = state.vector_index * STANDARD_VECTOR_SIZE;
-		auto max_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, state.max_row_group_row - current_row);
+
+        // perform rowid lookups in a rowgroup
+        if (state.parent.rows_count >= 0) {
+            auto scan_count = state.parent.rows_count - state.parent.rows_offset;
+            idx_t new_num = 0;
+            PerformLookups(transaction, state, result, state.parent.rowids, state.parent.rows_offset, new_num, scan_count);
+            result.SetCardinality(new_num);
+            state.parent.rows_offset += new_num;
+            return;
+        }
+
+        idx_t current_row = state.vector_index * STANDARD_VECTOR_SIZE;
+        auto max_count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, state.max_row_group_row - current_row);
+
+        SelectionVector valid_sel;
+        valid_sel.InitializeCopy((sel_t *)FlatVector::incremental_vector);
+        idx_t sel_count = max_count;
 
 		//! first check the zonemap if we have to scan this partition
-		if (!CheckZonemapSegments(state)) {
+		if (!CheckZonemapSegments(state, current_row, valid_sel, sel_count)) {
 			continue;
 		}
+        // if (state.parent.zones)
+        //    std::cout << "row group: " << sel_count << std::endl;
+        // if (sel_count == 46)
+        //    int stop_here = 0;
 		// second, scan the version chunk manager to figure out which tuples to load for this transaction
 		idx_t count;
-		SelectionVector valid_sel(STANDARD_VECTOR_SIZE);
 		if (TYPE == TableScanType::TABLE_SCAN_REGULAR) {
-			count = state.row_group->GetSelVector(transaction, state.vector_index, valid_sel, max_count);
+			count = state.row_group->GetSelVector(transaction, state.vector_index, valid_sel, sel_count);
 			if (count == 0) {
 				// nothing to scan for this vector, skip the entire vector
 				NextVector(state);
@@ -451,16 +589,16 @@ void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &s
 			}
 		} else if (TYPE == TableScanType::TABLE_SCAN_COMMITTED_ROWS_OMIT_PERMANENTLY_DELETED) {
 			count = state.row_group->GetCommittedSelVector(transaction.start_time, transaction.transaction_id,
-			                                               state.vector_index, valid_sel, max_count);
+			                                               state.vector_index, valid_sel, sel_count);
 			if (count == 0) {
 				// nothing to scan for this vector, skip the entire vector
 				NextVector(state);
 				continue;
 			}
 		} else {
-			count = max_count;
+			count = sel_count;
 		}
-		if (count == max_count && !table_filters) {
+		if (!table_filters) {
 			// scan all vectors completely: full scan without deletions or table filters
 			for (idx_t i = 0; i < column_ids.size(); i++) {
 				const auto &column = column_ids[i];
@@ -478,6 +616,9 @@ void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &s
 					}
 				}
 			}
+            if (count < max_count) {
+                result.Slice(valid_sel, count);
+            }
 		} else {
 			// partial scan: we have deletions or table filters
 			idx_t approved_tuple_count = count;

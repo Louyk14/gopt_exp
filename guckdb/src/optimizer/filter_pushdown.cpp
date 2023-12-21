@@ -66,12 +66,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownJoin(unique_ptr<LogicalOpera
 	LogicalJoin::GetTableReferences(*op->children[1], right_bindings);
 
     if (op->op_mark == OpMark::SIP_JOIN || op->op_mark == OpMark::MERGED_SIP_JOIN) {
-        if (join.join_type == JoinType::INNER) {
-            return PushdownInnerJoin(std::move(op), left_bindings, right_bindings);
-        }
-        else {
-            return FinishPushdown(std::move(op));
-        }
+        return FinishPushdown(std::move(op));
     }
     else {
         switch (join.join_type) {

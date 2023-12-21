@@ -101,7 +101,7 @@ public:
 		return state == BlockState::BLOCK_UNLOADED;
 	}
 
-private:
+public:
 	static BufferHandle Load(shared_ptr<BlockHandle> &handle, unique_ptr<FileBuffer> buffer = nullptr);
 	unique_ptr<FileBuffer> UnloadAndTakeBlock();
 	void Unload();

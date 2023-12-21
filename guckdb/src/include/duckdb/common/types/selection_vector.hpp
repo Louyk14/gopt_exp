@@ -81,6 +81,11 @@ public:
 		selection_data = other.selection_data;
 		sel_vector = other.sel_vector;
 	}
+    void InitializeCopy(sel_t *sel, idx_t count = STANDARD_VECTOR_SIZE) {
+        selection_data = make_buffer<SelectionData>(count);
+        sel_vector = selection_data->owned_data.get();
+        memcpy(sel_vector, sel, count * sizeof(sel_t));
+    }
 
 	inline void set_index(idx_t idx, idx_t loc) {
 		sel_vector[idx] = loc;

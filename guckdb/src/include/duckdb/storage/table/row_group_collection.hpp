@@ -117,7 +117,7 @@ public:
 private:
 	bool IsEmpty(SegmentLock &) const;
 
-private:
+public:
 	//! BlockManager
 	BlockManager &block_manager;
 	//! The number of rows in the table

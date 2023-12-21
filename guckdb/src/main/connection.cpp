@@ -78,6 +78,7 @@ unique_ptr<MaterializedQueryResult> Connection::Query(const string &query) {
 }
 
 void Connection::QueryPb(const string &query) {
+
     context->Query(query, false);
 }
 

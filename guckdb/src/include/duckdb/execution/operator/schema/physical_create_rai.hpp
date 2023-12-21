@@ -65,10 +65,10 @@ public:
         return true;
     }
     bool ParallelSource() const override {
-        return true;
+        return false;
     }
     bool ParallelOperator() const override {
-        return true;
+        return false;
     }
 };
 } // namespace duckdb

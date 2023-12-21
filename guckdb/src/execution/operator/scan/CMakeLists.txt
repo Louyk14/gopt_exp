@@ -6,7 +6,8 @@ add_library_unity(
   physical_empty_result.cpp
   physical_expression_scan.cpp
   physical_positional_scan.cpp
-  physical_table_scan.cpp)
+  physical_table_scan.cpp
+  physical_lookup.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_operator_scan>
     PARENT_SCOPE)

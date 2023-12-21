@@ -399,7 +399,7 @@ bool FilterCombiner::HasFilters() {
 // 	return zonemap_checks;
 // }
 
-TableFilterSet FilterCombiner::GenerateTableScanFilters(vector<idx_t> &column_ids) {
+TableFilterSet FilterCombiner::GenerateTableScanFilters(vector<idx_t> &column_ids, vector<unique_ptr<Expression>>& expr_list) {
 	TableFilterSet table_filters;
 	//! First, we figure the filters that have constant expressions that we can push down to the table scan
 	for (auto &constant_value : constant_values) {
@@ -427,14 +427,50 @@ TableFilterSet FilterCombiner::GenerateTableScanFilters(vector<idx_t> &column_id
 					auto &constant_list = constant_values.find(equivalence_set)->second;
 					// for each entry generate an equality expression comparing to each other
 					for (idx_t i = 0; i < entries.size(); i++) {
+                        for (idx_t k = i + 1; k < entries.size(); k++) {
+                            auto comparison = make_uniq<BoundComparisonExpression>(
+                                    ExpressionType::COMPARE_EQUAL, entries[i].get().Copy(), entries[k].get().Copy());
+                            expr_list.push_back(move(comparison));
+                        }
 						// for each entry also create a comparison with each constant
+                        int lower_index = -1, upper_index = -1;
 						for (idx_t k = 0; k < constant_list.size(); k++) {
 							auto constant_filter = make_uniq<ConstantFilter>(constant_value.second[k].comparison_type,
 							                                                 constant_value.second[k].constant);
 							table_filters.PushFilter(column_index, std::move(constant_filter));
+
+                            auto &info = constant_list[k];
+                            if (info.comparison_type == ExpressionType::COMPARE_GREATERTHAN ||
+                                info.comparison_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+                                lower_index = k;
+
+                            } else if (info.comparison_type == ExpressionType::COMPARE_LESSTHAN ||
+                                       info.comparison_type == ExpressionType::COMPARE_LESSTHANOREQUALTO) {
+                                upper_index = k;
+                            } else {
+                                auto constant = make_uniq<BoundConstantExpression>(info.constant);
+                                auto comparison = make_uniq<BoundComparisonExpression>(
+                                        info.comparison_type, entries[i].get().Copy(), move(constant));
+                                expr_list.push_back(move(comparison));
+                            }
+                            if (lower_index >= 0) {
+                                // only lower index found, create simple comparison expression
+                                auto constant = make_uniq<BoundConstantExpression>(constant_list[lower_index].constant);
+                                auto comparison = make_uniq<BoundComparisonExpression>(
+                                        constant_list[lower_index].comparison_type, entries[i].get().Copy(), move(constant));
+                                expr_list.push_back(move(comparison));
+                            }
+                            if (upper_index >= 0) {
+                                // only upper index found, create simple comparison expression
+                                auto constant = make_uniq<BoundConstantExpression>(constant_list[upper_index].constant);
+                                auto comparison = make_uniq<BoundComparisonExpression>(
+                                        constant_list[upper_index].comparison_type, entries[i].get().Copy(), move(constant));
+                                expr_list.push_back(move(comparison));
+                            }
 						}
 						table_filters.PushFilter(column_index, make_uniq<IsNotNullFilter>());
 					}
+
 					equivalence_map.erase(filter_exp);
 				}
 			}

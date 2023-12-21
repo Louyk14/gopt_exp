@@ -179,6 +179,7 @@ namespace duckdb {
         auto &lstate = input.local_state.Cast<SIPJoinLocalSinkState>();
         // resolve the join keys for the right chunk
 
+        // std::cout << "sip join sink: " << chunk.size() << std::endl;
         // if (right_projection_map.size() > 0) {
         //    lstate.build_chunk.InitializeEmpty(lstate.hash_table->build_types);
         // }
@@ -298,7 +299,6 @@ namespace duckdb {
                 sink.hash_table->GenerateBitmaskFilter(*rai_info, rai_info->compact_list != nullptr);
                 PassBitMaskFilter();
             }
-
             event->FinishTask();
             return TaskExecutionResult::TASK_FINISHED;
         }
@@ -550,6 +550,8 @@ namespace duckdb {
         D_ASSERT(sink.finalized);
         D_ASSERT(!sink.scanned_data);
 
+        // std::cout << "sip join execute internal: " << input.size() << " " << sink.hash_table->Count() << std::endl;
+
         // some initialization for external hash join
         if (sink.external && !state.initialized) {
             if (!sink.probe_spill) {
@@ -590,6 +592,8 @@ namespace duckdb {
         state.join_keys.Reset();
         state.probe_executor.Execute(input, state.join_keys);
 
+        idx_t original_size = input.size();
+
         // perform the actual probe
         if (sink.external) {
             state.scan_structure = sink.hash_table->ProbeAndSpill(state.join_keys, input, *sink.probe_spill,
@@ -598,6 +602,10 @@ namespace duckdb {
             // ProbeHashTable -> Probe
             state.scan_structure = sink.hash_table->Probe(state.join_keys);
         }
+
+        if (state.scan_structure->count != original_size)
+            std::cout << "error: " << original_size << " " << state.scan_structure->count << std::endl;
+
         state.scan_structure->Next(state.join_keys, input, chunk);
         return OperatorResultType::HAVE_MORE_OUTPUT;
     }

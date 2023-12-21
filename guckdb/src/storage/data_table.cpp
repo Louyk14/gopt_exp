@@ -195,6 +195,23 @@ void DataTable::InitializeScan(TableScanState &state, const vector<column_t> &co
 	row_groups->InitializeScan(state.table_state, column_ids, table_filters);
 }
 
+void DataTable::InitializeScan(TableScanState &state, vector<column_t> column_ids,
+							   const shared_ptr<rows_vector> &rowids_, idx_t rows_count_,
+							   TableFilterSet *table_filters) {
+	InitializeScan(state, move(column_ids), table_filters);
+	state.rowids = rowids_;
+	state.rows_offset = 0;
+	state.rows_count = rows_count_;
+}
+
+void DataTable::InitializeScan(TableScanState &state, vector<column_t> column_ids,
+							   const shared_ptr<bitmask_vector> &zones_, const shared_ptr<bitmask_vector> &zones_sel,
+							   TableFilterSet *table_filters) {
+	InitializeScan(state, move(column_ids), table_filters);
+	state.zones = zones_;
+	state.zones_sel = zones_sel;
+}
+
 void DataTable::InitializeScan(DuckTransaction &transaction, TableScanState &state, const vector<column_t> &column_ids,
                                TableFilterSet *table_filters) {
 	InitializeScan(state, column_ids, table_filters);

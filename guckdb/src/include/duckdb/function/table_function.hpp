@@ -15,6 +15,7 @@
 #include "duckdb/planner/bind_context.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/storage/statistics/node_statistics.hpp"
+#include "duckdb/storage/alist.hpp"
 
 #include <functional>
 
@@ -94,6 +95,32 @@ struct TableFunctionBindInput {
 	optional_ptr<TableFunctionInfo> info;
 };
 
+struct TableFunctionInitInputRAI {
+    TableFunctionInitInputRAI(Vector *rid_vector_p, DataChunk *rai_chunk_p, const shared_ptr<rows_vector>& rows_filter_p,
+                              const shared_ptr<bitmask_vector>& row_bitmask_p, const shared_ptr<bitmask_vector>& zone_bitmask_p,
+                              row_t rows_count_p, TableFilterSet* table_filters_p, shared_ptr<ExpressionExecutor> executor_p,
+                              SelectionVector *sel_p):rid_vector(rid_vector_p), rai_chunk(rai_chunk_p), rows_filter(rows_filter_p),
+                              row_bitmask(row_bitmask_p), zone_bitmask(zone_bitmask_p), rows_count(rows_count_p), table_filters(table_filters_p),
+                              executor(executor_p), sel(sel_p) {
+    }
+    TableFunctionInitInputRAI():rid_vector(nullptr), rai_chunk(nullptr), rows_filter(nullptr), row_bitmask(nullptr),
+                                zone_bitmask(nullptr), rows_count(-1), table_filters(nullptr),
+                                executor(nullptr), sel(nullptr) {
+    }
+
+    //! rid_vector
+    Vector *rid_vector;
+    DataChunk *rai_chunk;
+    //! rows_count
+    shared_ptr<rows_vector> rows_filter;
+    shared_ptr<bitmask_vector> row_bitmask;
+    shared_ptr<bitmask_vector> zone_bitmask;
+    row_t rows_count;
+    TableFilterSet* table_filters;
+    shared_ptr<ExpressionExecutor> executor;
+    SelectionVector *sel;
+};
+
 struct TableFunctionInitInput {
 	TableFunctionInitInput(optional_ptr<const FunctionData> bind_data_p, const vector<column_t> &column_ids_p,
 	                       const vector<idx_t> &projection_ids_p, optional_ptr<TableFilterSet> filters_p)
@@ -104,6 +131,7 @@ struct TableFunctionInitInput {
 	const vector<column_t> &column_ids;
 	const vector<idx_t> projection_ids;
 	optional_ptr<TableFilterSet> filters;
+    struct TableFunctionInitInputRAI input_rai;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {

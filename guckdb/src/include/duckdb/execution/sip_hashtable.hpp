@@ -214,8 +214,8 @@ namespace duckdb {
         void ApplyBitmask(Vector &hashes, const SelectionVector &sel, idx_t count, Vector &pointers);
         void ApplyKeymask(Vector &hashes, const SelectionVector &sel, idx_t count, Vector &pointers);
 
-        static void FillBitmaskWithAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
-        static void FillBitmaskWithoutAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
+        void FillBitmaskWithAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
+        void FillBitmaskWithoutAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
     private:
         //! Insert the given set of locations into the HT with the given set of hashes
         void InsertHashes(Vector &hashes, idx_t count, data_ptr_t key_locations[], bool parallel);

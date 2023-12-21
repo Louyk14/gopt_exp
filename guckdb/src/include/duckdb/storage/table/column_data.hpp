@@ -157,7 +157,7 @@ protected:
 	template <bool SCAN_COMMITTED, bool ALLOW_UPDATES>
 	idx_t ScanVector(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result);
 
-protected:
+public:
 	//! The segments holding the data of this column segment
 	ColumnSegmentTree data;
 	//! The lock for the updates

@@ -76,8 +76,14 @@ public:
 
 	void InitializeScan(TableScanState &state, const vector<column_t> &column_ids,
 	                    TableFilterSet *table_filter = nullptr);
+    void InitializeScan(TableScanState &state, vector<column_t> column_ids, const shared_ptr<rows_vector> &rowids,
+                        idx_t rows_count, TableFilterSet *table_filter = nullptr);
+    void InitializeScan(TableScanState &state, vector<column_t> column_ids, const shared_ptr<bitmask_vector> &zones,
+                        const shared_ptr<bitmask_vector> &zones_sel,
+                        TableFilterSet *table_filter = nullptr);
 	void InitializeScan(DuckTransaction &transaction, TableScanState &state, const vector<column_t> &column_ids,
 	                    TableFilterSet *table_filters = nullptr);
+
 
 	//! Returns the maximum amount of threads that should be assigned to scan this data table
 	idx_t MaxThreads(ClientContext &context);

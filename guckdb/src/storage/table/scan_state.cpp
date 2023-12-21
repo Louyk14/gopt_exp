@@ -76,6 +76,7 @@ CollectionScanState::CollectionScanState(TableScanState &parent_p)
       parent(parent_p) {
 }
 
+
 bool CollectionScanState::Scan(DuckTransaction &transaction, DataChunk &result) {
 	while (row_group) {
 		row_group->Scan(transaction, *this, result);

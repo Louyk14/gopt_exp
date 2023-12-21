@@ -233,6 +233,8 @@ namespace duckdb {
             source_chunk.data[i].Reference(keys.data[i]);
         }
         idx_t col_offset = keys.ColumnCount();
+        if (build_types.size() != payload.ColumnCount())
+            int to_stop = 0;
         D_ASSERT(build_types.size() == payload.ColumnCount());
         for (idx_t i = 0; i < payload.ColumnCount(); i++) {
             source_chunk.data[col_offset + i].Reference(payload.data[i]);
@@ -364,6 +366,7 @@ namespace duckdb {
             rai_info.extra_row_bitmask = make_uniq<bitmask_vector>(extra_zone_size * STANDARD_VECTOR_SIZE);
             rai_info.extra_zone_bitmask = make_uniq<bitmask_vector>(extra_zone_size);
         }
+
         // fill bitmask filters
         Vector keys(LogicalType::BIGINT);
         auto key_data = FlatVector::GetData<int64_t>(keys);
@@ -409,6 +412,7 @@ namespace duckdb {
         if (rai_info.passing_tables[1] == 0) {
             for (idx_t i = 0; i < count; i++) {
                 idx_t pos = key_data.sel->get_index(i);
+
                 auto offset = compact_list->offsets[keys[pos]];
                 auto size = compact_list->sizes[keys[pos]];
                 for (idx_t j = 0; j < size; j++) {

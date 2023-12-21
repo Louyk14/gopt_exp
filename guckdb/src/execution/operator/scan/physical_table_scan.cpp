@@ -7,21 +7,65 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/storage/table/scan_state.hpp"
 
 #include <utility>
 
 namespace duckdb {
 
-PhysicalTableScan::PhysicalTableScan(vector<LogicalType> types, TableFunction function_p,
+PhysicalTableScan::PhysicalTableScan(vector<LogicalType> types, TableFunction function_p, idx_t table_index,
                                      unique_ptr<FunctionData> bind_data_p, vector<LogicalType> returned_types_p,
-                                     vector<column_t> column_ids_p, vector<idx_t> projection_ids_p,
+                                     vector<column_t> column_ids_p, vector<unique_ptr<Expression>> filter, vector<idx_t> projection_ids_p,
                                      vector<string> names_p, unique_ptr<TableFilterSet> table_filters_p,
                                      idx_t estimated_cardinality, ExtraOperatorInfo extra_info)
     : PhysicalOperator(PhysicalOperatorType::TABLE_SCAN, std::move(types), estimated_cardinality),
-      function(std::move(function_p)), bind_data(std::move(bind_data_p)), returned_types(std::move(returned_types_p)),
+      function(std::move(function_p)), table_index(table_index), bind_data(std::move(bind_data_p)), returned_types(std::move(returned_types_p)),
       column_ids(std::move(column_ids_p)), projection_ids(std::move(projection_ids_p)), names(std::move(names_p)),
-      table_filters(std::move(table_filters_p)), extra_info(extra_info) {
+      table_filters(std::move(table_filters_p)), extra_info(extra_info), rows_filter(nullptr),
+      rows_count(-1) {
+    if (filter.size() > 1) {
+
+        //! create a big AND out of the expressions
+        auto conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
+        for (auto &expr: filter) {
+            conjunction->children.push_back(move(expr));
+        }
+        expression = move(conjunction);
+    } else if (filter.size() == 1) {
+        expression = move(filter[0]);
+    }
 }
+
+bool PhysicalTableScan::PushdownZoneFilter(idx_t table_index_, const shared_ptr<bitmask_vector> &row_bitmask_,
+                                               const shared_ptr<bitmask_vector> &zone_bitmask_) {
+    if (this->table_index == table_index_) {
+        if (this->row_bitmask) {
+            auto &result_row_bitmask = *row_bitmask;
+            auto &input_row_bitmask = *row_bitmask_;
+            auto &result_zone_bitmask = *zone_bitmask;
+            auto &input_zone_bitmask = *zone_bitmask_;
+            for (idx_t i = 0; i < zone_bitmask_->size(); i++) {
+                result_zone_bitmask[i] = result_zone_bitmask[i] & input_zone_bitmask[i];
+            }
+            auto zone_filter_index = 0;
+            for (idx_t i = 0; i < result_zone_bitmask.size(); i++) {
+                auto zone_count = result_zone_bitmask[i] * STANDARD_VECTOR_SIZE;
+                for (idx_t j = 0; j < zone_count; j++) {
+                    auto current_index = i * STANDARD_VECTOR_SIZE + j;
+                    result_row_bitmask[current_index] =
+                            result_row_bitmask[current_index] & input_row_bitmask[current_index];
+                }
+                zone_filter_index += STANDARD_VECTOR_SIZE;
+            }
+        } else {
+            this->row_bitmask = row_bitmask_;
+            this->zone_bitmask = zone_bitmask_;
+        }
+        return true;
+    }
+    return false;
+}
+
 
 class TableScanGlobalSourceState : public GlobalSourceState {
 public:
@@ -51,8 +95,14 @@ public:
 	                          const PhysicalTableScan &op) {
 		if (op.function.init_local) {
 			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, op.table_filters.get());
+            input.input_rai = TableFunctionInitInputRAI(nullptr, nullptr, op.rows_filter, op.row_bitmask, op.zone_bitmask, op.rows_count,
+                                                                  op.table_filters.get(), nullptr, nullptr);
 			local_state = op.function.init_local(context, input, gstate.global_state.get());
 		}
+
+        // if (op.expression != nullptr) {
+        //    executor = make_shared<ExpressionExecutor>(context.client, op.expression.get());
+        // }
 	}
 
 	unique_ptr<LocalTableFunctionState> local_state;
@@ -76,6 +126,12 @@ SourceResultType PhysicalTableScan::GetData(ExecutionContext &context, DataChunk
 	TableFunctionInput data(bind_data.get(), state.local_state.get(), gstate.global_state.get());
 	function.function(context.client, data, chunk);
 
+    // if (true) {
+        //for (int i = 0; i < chunk.data.size(); ++i) {
+        //    std::cout << chunk.data[i].ToString() << std::endl;
+        //}
+        // std::cout << "table scan output: " << " " << chunk.size() << std::endl << std::endl;
+    // }
 	return chunk.size() == 0 ? SourceResultType::FINISHED : SourceResultType::HAVE_MORE_OUTPUT;
 }
 

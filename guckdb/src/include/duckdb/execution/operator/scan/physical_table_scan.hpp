@@ -23,11 +23,13 @@ public:
 
 public:
 	//! Table scan that immediately projects out filter columns that are unused in the remainder of the query plan
-	PhysicalTableScan(vector<LogicalType> types, TableFunction function, unique_ptr<FunctionData> bind_data,
-	                  vector<LogicalType> returned_types, vector<column_t> column_ids, vector<idx_t> projection_ids,
+	PhysicalTableScan(vector<LogicalType> types, TableFunction function, idx_t table_index, unique_ptr<FunctionData> bind_data,
+	                  vector<LogicalType> returned_types, vector<column_t> column_ids, vector<unique_ptr<Expression>> filter, vector<idx_t> projection_ids,
 	                  vector<string> names, unique_ptr<TableFilterSet> table_filters, idx_t estimated_cardinality,
 	                  ExtraOperatorInfo extra_info);
 
+    //! The table id referenced in logical plan
+    idx_t table_index;
 	//! The table function
 	TableFunction function;
 	//! Bind data of the function
@@ -44,6 +46,8 @@ public:
 	unique_ptr<TableFilterSet> table_filters;
 	//! Currently stores any filters applied to file names (as strings)
 	ExtraOperatorInfo extra_info;
+    //! Expression
+    unique_ptr<Expression> expression;
 
 public:
 	string GetName() const override;
@@ -52,7 +56,9 @@ public:
 	bool Equals(const PhysicalOperator &other) const override;
 
 public:
-	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
+    bool PushdownZoneFilter(idx_t table_index, const shared_ptr<bitmask_vector> &zone_filter,
+                            const shared_ptr<bitmask_vector> &zone_sel) override;
+    unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                 GlobalSourceState &gstate) const override;
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
 	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
@@ -63,7 +69,7 @@ public:
 		return true;
 	}
 	bool ParallelSource() const override {
-		return true;
+		return false;
 	}
 
 	bool SupportsBatchIndex() const override {
@@ -74,6 +80,13 @@ public:
 
     string GetSubstraitInfo(unordered_map<ExpressionType, idx_t>& func_map, idx_t& func_num, idx_t depth = 0) const override;
     substrait::Rel* ToSubstraitClass(unordered_map<int, string>& tableid2name) const override;
+
+public:
+    //! The rows filter
+    shared_ptr<rows_vector> rows_filter;
+    shared_ptr<bitmask_vector> row_bitmask;
+    shared_ptr<bitmask_vector> zone_bitmask;
+    row_t rows_count;
 };
 
 } // namespace duckdb
