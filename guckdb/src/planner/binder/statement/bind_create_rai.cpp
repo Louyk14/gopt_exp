@@ -55,6 +55,7 @@ static unique_ptr<LogicalOperator> CreatePlanForPKFKRAI(BoundCreateRAIInfo &boun
     const ColumnList& entry = from_get->GetTable()->GetColumns();
 	if (entry.ColumnExists(col_name)) {
 		referenced_column_ids.push_back(entry.GetColumnIndex(col_name).index);
+        referenced_column_ids.push_back(entry.GetColumnIndex(col_name).index);
 	} else {
 		throw Exception("Column " + col_name + " in rai not found");
 	}

@@ -185,7 +185,7 @@ void SIPJoinRewriter::DoRewrite(LogicalComparisonJoin &join) {
 			auto &left_binding = reinterpret_cast<BoundColumnRefExpression *>(condition->left.get())->binding;
 			auto &right_binding = reinterpret_cast<BoundColumnRefExpression *>(condition->right.get())->binding;
 
-            if (left_binding.table == NULL) {
+            /*if (left_binding.table == NULL) {
                 // left_binding.column_ordinal = left_binding.column_index;
                 int left_index = left_binding.table_index;
                 if (left_index < binder.bind_context.GetBindingsList().size())
@@ -196,7 +196,7 @@ void SIPJoinRewriter::DoRewrite(LogicalComparisonJoin &join) {
                 int right_index = right_binding.table_index;
                 if (right_index < binder.bind_context.GetBindingsList().size())
                     right_binding.table = binder.bind_context.GetBindingsEntry(right_index);
-            }
+            }*/
 
 			if (left_binding.table == nullptr || right_binding.table == nullptr) {
 				continue;
