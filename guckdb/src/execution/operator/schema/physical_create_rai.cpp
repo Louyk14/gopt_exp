@@ -10,10 +10,20 @@ using namespace duckdb;
 
 class CreateRAIState : public CachingOperatorState {
 public:
-    explicit CreateRAIState(ExecutionContext &context) {
+    explicit CreateRAIState(ExecutionContext &context, const PhysicalCreateRAI& op) {
         vector<LogicalType> types;
-        for (int i = 0; i < 3; ++i) {
-            types.push_back(LogicalType::BIGINT);
+        if (op.rai_direction == RAIDirection::SELF || op.rai_direction == RAIDirection::UNDIRECTED) {
+            for (int i = 0; i < 3; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else if (op.rai_direction == RAIDirection::PKFK) {
+            for (int i = 0; i < 2; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else {
+            std::cout << "unsolved rai_drection in create rai state" << std::endl;
         }
         collection.Initialize(context.client, types);
     }
@@ -31,8 +41,18 @@ public:
     RAIGlobalSinkState(ClientContext &context_p, const PhysicalCreateRAI& op)
             : context(context_p) {
         vector<LogicalType> types;
-        for (int i = 0; i < 3; ++i) {
-            types.push_back(LogicalType::BIGINT);
+        if (op.rai_direction == RAIDirection::SELF || op.rai_direction == RAIDirection::UNDIRECTED) {
+            for (int i = 0; i < 3; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else if (op.rai_direction == RAIDirection::PKFK) {
+            for (int i = 0; i < 2; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else {
+            std::cout << "unsolved rai_drection in create rai state" << std::endl;
         }
         collection.Initialize(context, types);
     }
@@ -48,8 +68,18 @@ class RAILocalSinkState : public LocalSinkState {
 public:
     RAILocalSinkState(ClientContext &context, const PhysicalCreateRAI& op) {
         vector<LogicalType> types;
-        for (int i = 0; i < 3; ++i) {
-            types.push_back(LogicalType::BIGINT);
+        if (op.rai_direction == RAIDirection::SELF || op.rai_direction == RAIDirection::UNDIRECTED) {
+            for (int i = 0; i < 3; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else if (op.rai_direction == RAIDirection::PKFK) {
+            for (int i = 0; i < 2; ++i) {
+                types.push_back(LogicalType::BIGINT);
+            }
+        }
+        else {
+            std::cout << "unsolved rai_drection in create rai state" << std::endl;
         }
         collection.Initialize(context, types);
     }
@@ -129,14 +159,14 @@ void PhysicalCreateRAI::EnlargeTable(ClientContext &context, DataChunk &input) c
     // auto &state = state_p.Cast<CreateRAIState>();
     auto &sink = sink_state->Cast<RAIGlobalSinkState>();
 
-    int counts = 30;
+    /*int counts = 30;
     UnifiedVectorFormat source_data{}, edges_data{}, target_data{};
     input.data[0].ToUnifiedFormat(counts, source_data);
     input.data[1].ToUnifiedFormat(counts, edges_data);
     input.data[2].ToUnifiedFormat(counts, target_data);
     auto source_ids = UnifiedVectorFormat::GetData<hash_t>(source_data);
     auto edge_ids = UnifiedVectorFormat::GetData<hash_t>(edges_data);
-    auto target_ids = UnifiedVectorFormat::GetData<hash_t>(target_data);
+    auto target_ids = UnifiedVectorFormat::GetData<hash_t>(target_data);*/
 
     assert(children.size() == 1);
     unique_ptr<RAI> rai = make_uniq<RAI>(name, &table, rai_direction, column_ids, referenced_tables, referenced_columns);
@@ -149,8 +179,12 @@ void PhysicalCreateRAI::EnlargeTable(ClientContext &context, DataChunk &input) c
     table.AddRAIColumns(context, column_ids, updated_columns);
     int index0 = updated_columns[0];
     int index1 = updated_columns[1];
-    table.GetStorage().row_groups = table.GetStorage().row_groups->CreateAppendColumnRAI(index0, LogicalType::BIGINT, input.data[0], chunk_count);
-    table.GetStorage().row_groups = table.GetStorage().row_groups->CreateAppendColumnRAI(index1, LogicalType::BIGINT, input.data[2], chunk_count);
+
+    if (index0 != 0)
+        table.GetStorage().row_groups = table.GetStorage().row_groups->CreateAppendColumnRAI(index0, LogicalType::BIGINT, input.data[0], chunk_count);
+
+    if (index1 != 0)
+        table.GetStorage().row_groups = table.GetStorage().row_groups->CreateAppendColumnRAI(index1, LogicalType::BIGINT, input.data[2], chunk_count);
 
     /*
     TableAppendState table_state;
@@ -188,7 +222,7 @@ void PhysicalCreateRAI::EnlargeTable(ClientContext &context, DataChunk &input) c
 
 
 unique_ptr<OperatorState> PhysicalCreateRAI::GetOperatorState(ExecutionContext &context) const {
-    return make_uniq<CreateRAIState>(context);
+    return make_uniq<CreateRAIState>(context, *this);
 }
 
 

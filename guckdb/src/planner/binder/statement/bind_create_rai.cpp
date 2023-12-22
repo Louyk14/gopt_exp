@@ -72,6 +72,12 @@ static unique_ptr<LogicalOperator> CreatePlanForPKFKRAI(BoundCreateRAIInfo &boun
 	referenced_tables.push_back(from_get->GetTable().get());
 	referenced_tables.push_back(base_get->GetTable().get());
 
+    LogicalGet* get_ref_from_tbl = (LogicalGet*) from_tbl_ref->get.get();
+    LogicalGet* get_base_tbl = (LogicalGet*) base_tbl_ref->get.get();
+
+    int ref_from_tbl_index = get_ref_from_tbl->table_index;
+    int base_tbl_index = get_base_tbl->table_index;
+
 	auto join = make_uniq<LogicalComparisonJoin>(JoinType::LEFT);
 	join->AddChild(move(base_tbl_ref->get));
 	join->AddChild(move(from_tbl_ref->get));
@@ -83,8 +89,8 @@ static unique_ptr<LogicalOperator> CreatePlanForPKFKRAI(BoundCreateRAIInfo &boun
 
 
 
-	ColumnBinding proj_0(from_tbl_ref->table.oid, 1);
-	ColumnBinding proj_1(base_tbl_ref->table.oid, 1);
+	ColumnBinding proj_0(ref_from_tbl_index, 1);
+	ColumnBinding proj_1(base_tbl_index, 1);
 	vector<unique_ptr<Expression>> selection_list;
 	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_0));
 	selection_list.push_back(make_uniq<BoundColumnRefExpression>(LogicalType::BIGINT, proj_1));
