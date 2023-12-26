@@ -196,7 +196,10 @@ public:
 	//! Returns true if execution of the current query is finished
 	DUCKDB_API bool ExecutionIsFinished();
 
-    DUCKDB_API void SetPbParameters(int sql_mode_input=0, string pb_file_input="pb_output.log");
+    DUCKDB_API void SetPbParameters(int sql_mode_input=0, string pb_file_input="pb_output.log", unique_ptr<std::vector<string>> paras = NULL);
+
+public:
+    unique_ptr<PhysicalOperator> GenerateIC51Plan();
 
 private:
 	//! Parse statements and resolve pragmas from a query
@@ -271,6 +274,8 @@ private:
     int sql_mode;
     //! The pb_file related to the pb_file generate and pb_file execute mode
     string pb_file;
+    //! The parameters used in physical plan
+    unique_ptr<std::vector<string>> paras;
 };
 
 class ClientContextLock {
