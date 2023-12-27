@@ -199,7 +199,14 @@ public:
     DUCKDB_API void SetPbParameters(int sql_mode_input=0, string pb_file_input="pb_output.log", unique_ptr<std::vector<string>> paras = NULL);
 
 public:
+    unique_ptr<PhysicalOperator> GenerateIC11Plan();
+    unique_ptr<PhysicalOperator> GenerateIC12Plan();
+    unique_ptr<PhysicalOperator> GenerateIC13Plan();
+
+    unique_ptr<PhysicalOperator> GenerateIC21Plan();
+
     unique_ptr<PhysicalOperator> GenerateIC51Plan();
+    unique_ptr<PhysicalOperator> GenerateIC52Plan();
 
 private:
 	//! Parse statements and resolve pragmas from a query
