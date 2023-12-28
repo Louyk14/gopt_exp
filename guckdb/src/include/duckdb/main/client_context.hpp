@@ -210,6 +210,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC51Plan();
     unique_ptr<PhysicalOperator> GenerateIC52Plan();
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
+    unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
 
 private:
 	//! Parse statements and resolve pragmas from a query
