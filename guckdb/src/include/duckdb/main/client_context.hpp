@@ -211,6 +211,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC52Plan();
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
+    unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
 
 private:
 	//! Parse statements and resolve pragmas from a query
