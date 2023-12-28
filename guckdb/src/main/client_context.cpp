@@ -2537,8 +2537,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC31Plan() {
                                                   delim_types_place2, 0);
 
     // project
-    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
-                                     LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 2);
     auto result_col1 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
