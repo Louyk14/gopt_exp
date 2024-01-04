@@ -282,7 +282,6 @@ namespace duckdb {
         TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
             sink.hash_table->Finalize(chunk_idx_from, chunk_idx_to, parallel);
 
-            lock_guard<mutex> guard(local_lock);
             idx_t non_empty_hash_slots = 0;
             auto pointers = reinterpret_cast<data_ptr_t *>(sink.hash_table->hash_map.get());
             for (idx_t i = 0; i < sink.hash_table->bitmask; ++i) {
