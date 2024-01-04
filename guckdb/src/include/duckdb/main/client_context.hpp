@@ -199,6 +199,7 @@ public:
     DUCKDB_API void SetPbParameters(int sql_mode_input=0, string pb_file_input="pb_output.log", unique_ptr<std::vector<string>> paras = NULL);
 
 public:
+// ic query
     unique_ptr<PhysicalOperator> GenerateIC11Plan();
     unique_ptr<PhysicalOperator> GenerateIC12Plan();
     unique_ptr<PhysicalOperator> GenerateIC13Plan();
@@ -212,6 +213,10 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
+
+// job query
+    unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB1aPlanMerge(ClientContext& context);
 
 private:
 	//! Parse statements and resolve pragmas from a query

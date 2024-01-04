@@ -282,6 +282,7 @@ namespace duckdb {
         TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
             sink.hash_table->Finalize(chunk_idx_from, chunk_idx_to, parallel);
 
+            lock_guard<mutex> guard(local_lock);
             idx_t non_empty_hash_slots = 0;
             auto pointers = reinterpret_cast<data_ptr_t *>(sink.hash_table->hash_map.get());
             for (idx_t i = 0; i < sink.hash_table->bitmask; ++i) {
@@ -289,6 +290,7 @@ namespace duckdb {
             }
 
             auto &rai_info = sink.op.conditions[0].rais[0];
+            // std::cout << rai_info->rai->name << std::endl;
             // estimate semi-join filter passing ratio
             double avg_degree = rai_info->GetAverageDegree(rai_info->rai_type, rai_info->forward);
             auto probe_table_card = (double)rai_info->left_cardinalities[0];
@@ -309,6 +311,8 @@ namespace duckdb {
         idx_t chunk_idx_from;
         idx_t chunk_idx_to;
         bool parallel;
+
+        mutex local_lock;
     };
 
     class SIPJoinFinalizeEvent : public BasePipelineEvent {
@@ -603,8 +607,8 @@ namespace duckdb {
             state.scan_structure = sink.hash_table->Probe(state.join_keys);
         }
 
-        if (state.scan_structure->count != original_size)
-            std::cout << "error: " << original_size << " " << state.scan_structure->count << std::endl;
+        // if (state.scan_structure->count != original_size)
+        //    std::cout << "error: " << original_size << " " << state.scan_structure->count << std::endl;
 
         state.scan_structure->Next(state.join_keys, input, chunk);
         return OperatorResultType::HAVE_MORE_OUTPUT;

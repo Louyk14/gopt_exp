@@ -604,6 +604,8 @@ void RowGroup::TemplatedScan(TransactionData transaction, CollectionScanState &s
 				const auto &column = column_ids[i];
 				if (column == COLUMN_IDENTIFIER_ROW_ID) {
 					// scan row id
+                    if (result.data[i].GetType().InternalType() != ROW_TYPE)
+                        int to_stop = 0;
 					D_ASSERT(result.data[i].GetType().InternalType() == ROW_TYPE);
 					result.data[i].Sequence(this->start + current_row, 1, count);
 				} else {

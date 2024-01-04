@@ -39,6 +39,7 @@ PhysicalTableScan::PhysicalTableScan(vector<LogicalType> types, TableFunction fu
 bool PhysicalTableScan::PushdownZoneFilter(idx_t table_index_, const shared_ptr<bitmask_vector> &row_bitmask_,
                                                const shared_ptr<bitmask_vector> &zone_bitmask_) {
     if (this->table_index == table_index_) {
+        lock_guard<mutex> local_lock(parallel_lock);
         if (this->row_bitmask) {
             auto &result_row_bitmask = *row_bitmask;
             auto &input_row_bitmask = *row_bitmask_;

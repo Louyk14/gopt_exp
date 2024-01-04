@@ -49,6 +49,8 @@ public:
     //! Expression
     unique_ptr<Expression> expression;
 
+    mutex parallel_lock;
+
 public:
 	string GetName() const override;
 	string ParamsToString() const override;
