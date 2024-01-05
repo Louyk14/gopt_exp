@@ -202,6 +202,7 @@ public:
 // ic query
     unique_ptr<PhysicalOperator> GenerateIC11Plan();
     unique_ptr<PhysicalOperator> GenerateIC12Plan();
+    unique_ptr<PhysicalOperator> GenerateIC12PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC13Plan();
 
     unique_ptr<PhysicalOperator> GenerateIC21Plan();
