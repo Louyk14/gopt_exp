@@ -44,6 +44,18 @@ namespace duckdb {
         if (join_type != JoinType::ANTI && join_type != JoinType::SEMI && join_type != JoinType::MARK) {
             build_types = LogicalOperator::MapTypes(children[1]->GetTypes(), right_projection_map);
         }
+
+        for (int i = 0; i < conditions.size(); ++i) {
+            merge_rais.emplace_back(conditions[i].rais[0].get());
+        }
+
+        compact_lists = std::vector<CompactList*>(merge_rais.size() + 1, NULL);
+        for (int i = 0; i < merge_rais.size(); ++i) {
+            if (merge_rais[i]->forward)
+                compact_lists[i] = &merge_rais[i]->rai->alist->compact_forward_list;
+            else
+                compact_lists[i] = &merge_rais[i]->rai->alist->compact_backward_list;
+        }
     }
 
 
@@ -205,18 +217,13 @@ namespace duckdb {
         lstate.join_keys.Reset();
         lstate.build_executor.Execute(chunk, lstate.right_condition_chunk);
 
-        vector<RAIInfo*> merge_rais;
-        for (int i = 0; i < conditions.size(); ++i) {
-            merge_rais.emplace_back(conditions[i].rais[0].get());
-        }
-
         idx_t right_tuple = 0;
         std::vector<idx_t> left_tuple(merge_rais.size() + 1, 0);
         if (chunk.size() != 0) {
             build_side_size += chunk.size();
             do {
                 merge_rais[0]->rai->GetVertexesMerge(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
-                                                     right_tuple, merge_rais);
+                                                     right_tuple, merge_rais, compact_lists);
                 //rai_info->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
                 //                            right_tuple, rai_info->forward);
                 AppendHTBlocks(lstate, im_chunk, lstate.build_chunk);

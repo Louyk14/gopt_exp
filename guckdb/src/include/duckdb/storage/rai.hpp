@@ -56,7 +56,7 @@ public:
 	void GetVertexes(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &rai_chunk, idx_t &left_tuple,
 	                 idx_t &right_tuple, bool forward) const;
     void GetVertexesMerge(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &rai_chunk, std::vector<idx_t> &left_tuple,
-                     idx_t &right_tuple, vector<RAIInfo*>& merge_rais) const;
+                     idx_t &right_tuple, const vector<RAIInfo*>& merge_rais, const std::vector<CompactList*>& compact_lists) const;
 	// WARNING: Deprecated
 	idx_t GetZoneFilter(data_ptr_t *hashmap, idx_t hm_size, shared_ptr<bitmask_vector> &zone_filter,
 	                    shared_ptr<bitmask_vector> &extra_zone_filter, bool forward) const;

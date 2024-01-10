@@ -276,7 +276,7 @@ static idx_t FetchVertexesInternal(CompactList &alist, idx_t &lpos, idx_t &rpos,
 }
 
 static idx_t FetchVertexesInternalMerge(CompactList &alist, std::vector<idx_t> &lpos, idx_t &rpos, std::vector<Vector*> &rvector, idx_t rsize,
-                                   SelectionVector &rsel, Vector &r0vector, duckdb::vector<RAIInfo*>& merge_rais) {
+                                   SelectionVector &rsel, Vector &r0vector, const duckdb::vector<RAIInfo*>& merge_rais, const std::vector<CompactList*>& compact_lists) {
     assert(r0vector.GetVectorType() == VectorType::FLAT_VECTOR);
     if (rpos >= rsize) {
         return 0;
@@ -320,14 +320,6 @@ static idx_t FetchVertexesInternalMerge(CompactList &alist, std::vector<idx_t> &
             }
         }
     } else {
-        std::vector<CompactList*> compact_lists(merge_rais.size() + 1, NULL);
-        for (int i = 0; i < merge_rais.size(); ++i) {
-            if (merge_rais[i]->forward)
-                compact_lists[i] = &merge_rais[i]->rai->alist->compact_forward_list;
-            else
-                compact_lists[i] = &merge_rais[i]->rai->alist->compact_backward_list;
-        }
-
         while (rpos < rsize) {
             idx_t right_position = right_data.sel->get_index(rpos);
             auto rid = rdata[right_position];
@@ -335,24 +327,32 @@ static idx_t FetchVertexesInternalMerge(CompactList &alist, std::vector<idx_t> &
             auto length = alist.sizes.operator[](rid);
             auto result_size = std::min(length - lpos[0], STANDARD_VECTOR_SIZE - result_count);
 
+            std::vector<int> offsetk(merge_rais.size() + 1, 0);
+            std::vector<int> lengthk(merge_rais.size() + 1, 0);
+            for (int k = 1; k < merge_rais.size(); ++k) {
+                auto right_position_k = right_selects[k].sel->get_index(rpos);
+                // if (right_position != right_position_k) {
+                //     std::cout << rpos << " " << right_position << " " << right_position_k << std::endl;
+                // }
+                auto rid_other = datas[k][right_position_k];
+                offsetk[k] = compact_lists[k]->offsets.operator[](rid_other);
+                lengthk[k] = compact_lists[k]->sizes.operator[](rid_other);
+            }
+
             bool possible = true;
             for (int j = 0; j < result_size; ++j) {
                 idx_t nid = *(alist.vertices.get() + (offset + lpos[0] + j));
                 int agrees = 0;
                 // check in other lists
                 for (int k = 1; k < merge_rais.size(); ++k) {
-                    auto right_position_k = right_selects[k].sel->get_index(rpos);
                     // if (right_position != right_position_k) {
                     //     std::cout << rpos << " " << right_position << " " << right_position_k << std::endl;
                     // }
-                    auto rid_other = datas[k][right_position_k];
-                    auto offsetk = compact_lists[k]->offsets.operator[](rid_other);
-                    auto lengthk = compact_lists[k]->sizes.operator[](rid_other);
-                    if (lpos[k] >= lengthk) {
+                    if (lpos[k] >= lengthk[k]) {
                         possible = false;
                         break;
                     }
-                    idx_t nid_other = *(compact_lists[k]->vertices.get() + (offsetk + lpos[k]));
+                    idx_t nid_other = *(compact_lists[k]->vertices.get() + (offsetk[k] + lpos[k]));
                     if (nid_other < nid) {
                         lpos[k]++;
                         --k;
@@ -404,11 +404,11 @@ idx_t AList::FetchVertexes(idx_t &lpos, idx_t &rpos, Vector &rvector, idx_t rsiz
 }
 
 idx_t AList::FetchVertexes(std::vector<idx_t> &lpos, idx_t &rpos, std::vector<Vector*> &rvector, idx_t rsize, SelectionVector &rsel,
-                           Vector &r0vector, vector<RAIInfo*>& merge_rais) {
+                           Vector &r0vector, const vector<RAIInfo*>& merge_rais, const std::vector<CompactList*>& compact_lists) {
     if (merge_rais[0]->forward) {
-        return FetchVertexesInternalMerge(compact_forward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais);
+        return FetchVertexesInternalMerge(compact_forward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais, compact_lists);
     }
-    return FetchVertexesInternalMerge(compact_backward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais);
+    return FetchVertexesInternalMerge(compact_backward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais, compact_lists);
 }
 
 static idx_t BuildZoneFilterInternal(CompactList &alist, data_ptr_t *hashmap, idx_t size, bitmask_vector &zone_filter) {

@@ -47,6 +47,10 @@ namespace duckdb {
         PerfectHashJoinStats perfect_join_statistics;
         //! Other conditions except the main condition
         vector<JoinCondition> other_conditions;
+        //!
+        vector<RAIInfo*> merge_rais;
+        //!
+        std::vector<CompactList*> compact_lists;
 
     public:
         string ParamsToString() const;

@@ -31,7 +31,7 @@ void RAI::GetVertexes(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &n
 }
 
 void RAI::GetVertexesMerge(DataChunk &right_chunk, DataChunk &rid_chunk, DataChunk &new_chunk, std::vector<idx_t> &left_tuple,
-                      idx_t &right_tuple, vector<RAIInfo*>& merge_rais) const {
+                      idx_t &right_tuple, const vector<RAIInfo*>& merge_rais, const std::vector<CompactList*>& compact_lists) const {
     if (new_chunk.ColumnCount() != right_chunk.ColumnCount() + 1)
         int to_stop = 0;
     assert(new_chunk.ColumnCount() == right_chunk.ColumnCount() + 1);
@@ -41,7 +41,7 @@ void RAI::GetVertexesMerge(DataChunk &right_chunk, DataChunk &rid_chunk, DataChu
         rid_data.push_back(&rid_chunk.data[i]);
     }
     auto matched_count = alist->FetchVertexes(left_tuple, right_tuple, rid_data, rid_chunk.size(), rvector,
-                                              new_chunk.data[right_chunk.ColumnCount()], merge_rais);
+                                              new_chunk.data[right_chunk.ColumnCount()], merge_rais, compact_lists);
     // slice and construct new_chunk
     new_chunk.Slice(right_chunk, rvector, matched_count);
     new_chunk.SetCardinality(matched_count);

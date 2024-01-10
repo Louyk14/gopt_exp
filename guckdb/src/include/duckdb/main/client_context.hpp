@@ -216,6 +216,8 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
 
+    unique_ptr<PhysicalOperator> GenerateIC71PlanGLogue();
+
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB1aPlanMerge(ClientContext& context);
