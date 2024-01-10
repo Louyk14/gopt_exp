@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// duckdb/execution/operator/join/physical_merge_sip_join.hpp
+// duckdb/execution/operator/join/physical_extend_intersect.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -19,15 +19,15 @@
 namespace duckdb {
 
 //! PhysicalHashJoin represents a hash loop join between two tables
-    class PhysicalMergeSIPJoin : public PhysicalComparisonJoin {
+    class PhysicalExtendIntersect : public PhysicalComparisonJoin {
     public:
-        static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::MERGE_SIP_JOIN;
+        static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXTEND_INTERSECT;
 
     public:
-        PhysicalMergeSIPJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left, unique_ptr<PhysicalOperator> right,
-                         vector<JoinCondition> cond, JoinType join_type, const vector<idx_t> &left_projection_map,
-                         const vector<idx_t> &right_projection_map, const vector<idx_t> &merge_projection_map, vector<LogicalType> delim_types,
-                         idx_t estimated_cardinality);
+        PhysicalExtendIntersect(LogicalOperator &op, unique_ptr<PhysicalOperator> point, unique_ptr<PhysicalOperator> child,
+                                vector<JoinCondition> cond, vector<JoinCondition> other_conditions_p,
+                                JoinType join_type, const vector<idx_t> &left_projection_map, const vector<idx_t> &right_projection_map,
+                                const vector<idx_t> &merge_projection_map, vector<LogicalType> delim_types, idx_t estimated_cardinality);
 
         //! Initialize HT for this operator
         unique_ptr<SIPHashTable> InitializeHashTable(ClientContext &context) const;
@@ -45,6 +45,8 @@ namespace duckdb {
         vector<LogicalType> delim_types;
         //! Used in perfect hash join
         PerfectHashJoinStats perfect_join_statistics;
+        //! Other conditions except the main condition
+        vector<JoinCondition> other_conditions;
 
     public:
         string ParamsToString() const;
@@ -53,7 +55,7 @@ namespace duckdb {
         unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
 
         bool ParallelOperator() const override {
-            return false;
+            return true;
         }
 
     protected:
@@ -73,7 +75,7 @@ namespace duckdb {
         }
 
         bool ParallelSource() const override {
-            return false;
+            return true;
         }
 
     public:
@@ -90,7 +92,7 @@ namespace duckdb {
             return true;
         }
         bool ParallelSink() const override {
-            return false;
+            return true;
         }
     };
 

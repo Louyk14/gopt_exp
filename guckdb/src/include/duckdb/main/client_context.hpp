@@ -210,6 +210,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC31Plan();
 
     unique_ptr<PhysicalOperator> GenerateIC51Plan();
+    unique_ptr<PhysicalOperator> GenerateIC51PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC52Plan();
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
@@ -218,6 +219,11 @@ public:
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB1aPlanMerge(ClientContext& context);
+
+// triangle query (person - forum - post)
+    unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
+// path query (person - knows - person - forum_person - forum)
+    unique_ptr<PhysicalOperator> GeneratePath(ClientContext& context);
 
 private:
 	//! Parse statements and resolve pragmas from a query

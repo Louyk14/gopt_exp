@@ -115,6 +115,8 @@ namespace duckdb {
     public:
         SIPHashTable(BufferManager &buffer_manager, const vector<JoinCondition> &conditions,
                       vector<LogicalType> build_types, JoinType type);
+        SIPHashTable(BufferManager &buffer_manager, const vector<JoinCondition> &conditions, const vector<JoinCondition> &other_conditions,
+                     vector<LogicalType> build_types, JoinType type);
         ~SIPHashTable();
 
         //! Add the given data to the HT
@@ -132,6 +134,7 @@ namespace duckdb {
         //! Probe the HT with the given input chunk, resulting in the given result
         unique_ptr<SIPScanStructure> Probe(DataChunk &keys, Vector *precomputed_hashes = nullptr);
         void GenerateBitmaskFilter(RAIInfo &rai_info, bool use_alist);
+        void GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist);
         //! Scan the HT to construct the full outer join result
         void ScanFullOuter(SIPHTScanState &state, Vector &addresses, DataChunk &result);
 
@@ -161,6 +164,8 @@ namespace duckdb {
         BufferManager &buffer_manager;
         //! The join conditions
         const vector<JoinCondition> &conditions;
+        //! The join conditions
+        const vector<JoinCondition> &other_conditions;
         //! The types of the keys used in equality comparison
         vector<LogicalType> equality_types;
         //! The types of the keys
@@ -216,6 +221,8 @@ namespace duckdb {
 
         void FillBitmaskWithAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
         void FillBitmaskWithoutAList(Vector &key_vector, idx_t count, RAIInfo &rai_info);
+        void FillBitmaskWithAListIncremental(Vector &key_vector, idx_t count, RAIInfo &rai_info, shared_ptr<bitmask_vector> row_bitmask_pre);
+        void FillBitmaskWithoutAListIncremental(Vector &key_vector, idx_t count, RAIInfo &rai_info, shared_ptr<bitmask_vector> row_bitmask_pre);
     private:
         //! Insert the given set of locations into the HT with the given set of hashes
         void InsertHashes(Vector &hashes, idx_t count, data_ptr_t key_locations[], bool parallel);

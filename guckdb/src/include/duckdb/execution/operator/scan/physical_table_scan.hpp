@@ -71,7 +71,7 @@ public:
 		return true;
 	}
 	bool ParallelSource() const override {
-		return true;
+		return false;
 	}
 
 	bool SupportsBatchIndex() const override {

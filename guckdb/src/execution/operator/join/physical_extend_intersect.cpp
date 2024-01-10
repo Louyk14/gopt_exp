@@ -1,4 +1,4 @@
-#include "duckdb/execution/operator/join/physical_merge_sip_join.hpp"
+#include "duckdb/execution/operator/join/physical_extend_intersect.hpp"
 
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -16,19 +16,27 @@
 
 namespace duckdb {
 
-    PhysicalMergeSIPJoin::PhysicalMergeSIPJoin(LogicalOperator &op, unique_ptr<PhysicalOperator> left,
-                                       unique_ptr<PhysicalOperator> right, vector<JoinCondition> cond, JoinType join_type,
-                                       const vector<idx_t> &left_projection_map, const vector<idx_t> &right_projection_map_p,
-                                       const vector<idx_t> &merge_projection_map, vector<LogicalType> delim_types,
-                                       idx_t estimated_cardinality)
-            : PhysicalComparisonJoin(op, PhysicalOperatorType::MERGE_SIP_JOIN, std::move(cond), join_type, estimated_cardinality),
-              right_projection_map(right_projection_map_p), delim_types(std::move(delim_types)) {
+    PhysicalExtendIntersect::PhysicalExtendIntersect(duckdb::LogicalOperator &op,
+                                                     unique_ptr<duckdb::PhysicalOperator> point,
+                                                     unique_ptr<duckdb::PhysicalOperator> child,
+                                                     vector<JoinCondition> cond_p, vector<JoinCondition> other_conditions_p,
+                                                     duckdb::JoinType join_type,
+                                                     const vector<duckdb::idx_t> &left_projection_map,
+                                                     const vector<duckdb::idx_t> &right_projection_map_p,
+                                                     const vector<duckdb::idx_t> &merge_projection_map_p,
+                                                     vector<duckdb::LogicalType> delim_types_p,
+                                                     duckdb::idx_t estimated_cardinality)
+            : PhysicalComparisonJoin(op, PhysicalOperatorType::EXTEND_INTERSECT, std::move(cond_p), join_type, estimated_cardinality),
+              right_projection_map(right_projection_map_p), delim_types(std::move(delim_types)), other_conditions(std::move(other_conditions_p)) {
 
-        children.push_back(std::move(left));
-        children.push_back(std::move(right));
+        children.push_back(std::move(point));
+        children.push_back(std::move(child));
 
         D_ASSERT(left_projection_map.empty());
-        for (auto &condition : conditions) {
+        for (auto& condition : conditions) {
+            condition_types.push_back(condition.left->return_type);
+        }
+        for (auto& condition : other_conditions) {
             condition_types.push_back(condition.left->return_type);
         }
 
@@ -42,9 +50,9 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Sink
 //===--------------------------------------------------------------------===//
-    class MergeSIPJoinGlobalSinkState : public GlobalSinkState {
+    class ExtendIntersectGlobalSinkState : public GlobalSinkState {
     public:
-        MergeSIPJoinGlobalSinkState(const PhysicalMergeSIPJoin &op, ClientContext &context_p)
+        ExtendIntersectGlobalSinkState(const PhysicalExtendIntersect &op, ClientContext &context_p)
                 : context(context_p), finalized(false), scanned_data(false), op(op) {
             hash_table = op.InitializeHashTable(context);
 
@@ -85,19 +93,23 @@ namespace duckdb {
         //! Whether or not we have started scanning data using GetData
         atomic<bool> scanned_data;
 
-        const PhysicalMergeSIPJoin& op;
+        const PhysicalExtendIntersect& op;
     };
 
-    class MergeSIPJoinLocalSinkState : public LocalSinkState {
+    class ExtendIntersectLocalSinkState : public LocalSinkState {
     public:
-        MergeSIPJoinLocalSinkState(const PhysicalMergeSIPJoin &op, ClientContext &context) : build_executor(context) {
+        ExtendIntersectLocalSinkState(const PhysicalExtendIntersect &op, ClientContext &context) : build_executor(context) {
             auto &allocator = BufferAllocator::Get(context);
             // if (!op.right_projection_map.empty()) {
-                build_chunk.Initialize(allocator, op.build_types);
+            build_chunk.Initialize(allocator, op.build_types);
             // }
             for (auto &cond : op.conditions) {
                 build_executor.AddExpression(*cond.right);
             }
+            for (auto &cond : op.other_conditions) {
+                build_executor.AddExpression(*cond.right);
+            }
+
             join_keys.Initialize(allocator, op.condition_types);
             right_condition_chunk.Initialize(allocator, op.condition_types);
 
@@ -119,9 +131,9 @@ namespace duckdb {
         DataChunk right_condition_chunk;
     };
 
-    unique_ptr<SIPHashTable> PhysicalMergeSIPJoin::InitializeHashTable(ClientContext &context) const {
-        auto result = make_uniq<SIPHashTable>(BufferManager::GetBufferManager(context), conditions,
-                                                build_types, join_type);
+    unique_ptr<SIPHashTable> PhysicalExtendIntersect::InitializeHashTable(ClientContext &context) const {
+        auto result = make_uniq<SIPHashTable>(BufferManager::GetBufferManager(context), conditions, other_conditions,
+                                              build_types, join_type);
         result->max_ht_size = double(0.6) * BufferManager::GetBufferManager(context).GetMaxMemory();
         if (!delim_types.empty() && join_type == JoinType::MARK) {
             // correlated MARK join
@@ -171,16 +183,16 @@ namespace duckdb {
         return result;
     }
 
-    unique_ptr<GlobalSinkState> PhysicalMergeSIPJoin::GetGlobalSinkState(ClientContext &context) const {
-        return make_uniq<MergeSIPJoinGlobalSinkState>(*this, context);
+    unique_ptr<GlobalSinkState> PhysicalExtendIntersect::GetGlobalSinkState(ClientContext &context) const {
+        return make_uniq<ExtendIntersectGlobalSinkState>(*this, context);
     }
 
-    unique_ptr<LocalSinkState> PhysicalMergeSIPJoin::GetLocalSinkState(ExecutionContext &context) const {
-        return make_uniq<MergeSIPJoinLocalSinkState>(*this, context.client);
+    unique_ptr<LocalSinkState> PhysicalExtendIntersect::GetLocalSinkState(ExecutionContext &context) const {
+        return make_uniq<ExtendIntersectLocalSinkState>(*this, context.client);
     }
 
-    SinkResultType PhysicalMergeSIPJoin::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
-        auto &lstate = input.local_state.Cast<MergeSIPJoinLocalSinkState>();
+    SinkResultType PhysicalExtendIntersect::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
+        auto &lstate = input.local_state.Cast<ExtendIntersectLocalSinkState>();
 
         // resolve the join keys for the right chunk
 
@@ -193,14 +205,20 @@ namespace duckdb {
         lstate.join_keys.Reset();
         lstate.build_executor.Execute(chunk, lstate.right_condition_chunk);
 
-        auto &rai_info = conditions[0].rais[0];
+        vector<RAIInfo*> merge_rais;
+        for (int i = 0; i < conditions.size(); ++i) {
+            merge_rais.emplace_back(conditions[i].rais[0].get());
+        }
+
         idx_t right_tuple = 0;
-        idx_t left_tuple = 0;
+        std::vector<idx_t> left_tuple(merge_rais.size() + 1, 0);
         if (chunk.size() != 0) {
             build_side_size += chunk.size();
             do {
-                rai_info->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
-                                           right_tuple, rai_info->forward);
+                merge_rais[0]->rai->GetVertexesMerge(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
+                                                     right_tuple, merge_rais);
+                //rai_info->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
+                //                            right_tuple, rai_info->forward);
                 AppendHTBlocks(lstate, im_chunk, lstate.build_chunk);
             } while (right_tuple < chunk.size());
         }
@@ -208,9 +226,9 @@ namespace duckdb {
         return SinkResultType::NEED_MORE_INPUT;
     }
 
-    SinkCombineResultType PhysicalMergeSIPJoin::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
-        auto &gstate = input.global_state.Cast<MergeSIPJoinGlobalSinkState>();
-        auto &lstate = input.local_state.Cast<MergeSIPJoinLocalSinkState>();
+    SinkCombineResultType PhysicalExtendIntersect::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
+        auto &gstate = input.global_state.Cast<ExtendIntersectGlobalSinkState>();
+        auto &lstate = input.local_state.Cast<ExtendIntersectLocalSinkState>();
         if (lstate.hash_table) {
             lstate.hash_table->GetSinkCollection().FlushAppendState(lstate.append_state);
             lock_guard<mutex> local_ht_lock(gstate.lock);
@@ -223,7 +241,7 @@ namespace duckdb {
         return SinkCombineResultType::FINISHED;
     }
 
-    void PhysicalMergeSIPJoin::InitializeAList() {
+    void PhysicalExtendIntersect::InitializeAList() {
         auto &rai_info = conditions[0].rais[0];
         // determine the alist for usage
         switch (rai_info->rai_type) {
@@ -242,7 +260,7 @@ namespace duckdb {
         }
     }
 
-    void PhysicalMergeSIPJoin::InitializeZoneFilter() {
+    void PhysicalExtendIntersect::InitializeZoneFilter() {
         auto &rai_info = conditions[0].rais[0];
         auto zone_size = (rai_info->left_cardinalities[0] / STANDARD_VECTOR_SIZE) + 1;
         rai_info->row_bitmask = make_uniq<bitmask_vector>(zone_size * STANDARD_VECTOR_SIZE);
@@ -254,7 +272,7 @@ namespace duckdb {
         }
     }
 
-    void PhysicalMergeSIPJoin::PassZoneFilter() const {
+    void PhysicalExtendIntersect::PassZoneFilter() const {
         // actually do the pushdown
         auto &rai_info = conditions[0].rais[0];
         children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
@@ -264,16 +282,20 @@ namespace duckdb {
         }
     }
 
-    class MergeSIPJoinOperatorState;
+    class ExtendIntersectOperatorState;
 
-    void PhysicalMergeSIPJoin::AppendHTBlocks(LocalSinkState &input, DataChunk &chunk, DataChunk &build_chunk) const {
-        auto &lstate = input.Cast<MergeSIPJoinLocalSinkState>();
+    void PhysicalExtendIntersect::AppendHTBlocks(LocalSinkState &input, DataChunk &chunk, DataChunk &build_chunk) const {
+        auto &lstate = input.Cast<ExtendIntersectLocalSinkState>();
 
         lstate.join_keys.SetCardinality(chunk);
-        lstate.join_keys.data[0].Reference(chunk.data[chunk.ColumnCount() - 1]);
+        // the merge index must be the first join key, to be replaced by join_key.data[0]
+        lstate.build_executor.Execute(chunk, lstate.join_keys);
+        for (int i = 0; i < conditions.size(); ++i) {
+            lstate.join_keys.data[i].Reference(chunk.data[chunk.ColumnCount() - 1]);
+        }
         //	state->rhs_executor.Execute(chunk, state->join_keys);
         if (right_projection_map.size() > 0) {
-            // build_chunk.Reset();
+            build_chunk.Reset();
             build_chunk.SetCardinality(chunk);
             for (idx_t i = 0; i < right_projection_map.size(); i++) {
                 build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
@@ -294,10 +316,10 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Finalize
 //===--------------------------------------------------------------------===//
-    class MergeSIPJoinFinalizeTask : public ExecutorTask {
+    class ExtendIntersectFinalizeTask : public ExecutorTask {
     public:
-        MergeSIPJoinFinalizeTask(shared_ptr<Event> event_p, ClientContext &context, MergeSIPJoinGlobalSinkState &sink_p,
-                             idx_t chunk_idx_from_p, idx_t chunk_idx_to_p, bool parallel_p)
+        ExtendIntersectFinalizeTask(shared_ptr<Event> event_p, ClientContext &context, ExtendIntersectGlobalSinkState &sink_p,
+                                 idx_t chunk_idx_from_p, idx_t chunk_idx_to_p, bool parallel_p)
                 : ExecutorTask(context), event(std::move(event_p)), sink(sink_p), chunk_idx_from(chunk_idx_from_p),
                   chunk_idx_to(chunk_idx_to_p), parallel(parallel_p) {
         }
@@ -308,7 +330,17 @@ namespace duckdb {
             sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
             if (rai_info->passing_tables[1] != 0) {
                 sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[1], rai_info->extra_row_bitmask,
-                                                rai_info->extra_zone_bitmask);
+                                                        rai_info->extra_zone_bitmask);
+            }
+        }
+
+        void PassZoneFilterIncremental(idx_t rai_idx) const {
+            // actually do the pushdown
+            auto &rai_info = sink.op.conditions[rai_idx].rais[0];
+            sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[0], rai_info->row_bitmask, rai_info->zone_bitmask);
+            if (rai_info->passing_tables[1] != 0) {
+                sink.op.children[0]->PushdownZoneFilter(rai_info->passing_tables[1], rai_info->extra_row_bitmask,
+                                                        rai_info->extra_zone_bitmask);
             }
         }
 
@@ -321,12 +353,68 @@ namespace duckdb {
                 non_empty_hash_slots += (pointers[i] != nullptr);
             }
 
-            auto &rai_info = sink.op.conditions[0].rais[0];
-            double filter_passing_ratio = (double)non_empty_hash_slots / (double)rai_info->left_cardinalities[0];
-            if (filter_passing_ratio <= 0.8) {
-                sink.hash_table->GenerateBitmaskFilter(*rai_info, false);
-                PassZoneFilter();
+            idx_t last_rai_info_part = -1;
+            idx_t last_rai_info_index = -1;
+
+            for (int i = 0; i < sink.op.conditions.size(); ++i) {
+                if (!sink.op.conditions[i].rais.empty()) {
+                    if (last_rai_info_index == -1) {
+                        auto &rai_info = sink.op.conditions[0].rais[0];
+                        sink.hash_table->GenerateBitmaskFilter(*rai_info,
+                                                               rai_info->rai->rai_direction ==
+                                                               RAIDirection::PKFK &&
+                                                               rai_info->compact_list != nullptr);
+                    }
+                    else {
+                        auto &rai_info = sink.op.conditions[i].rais[0];
+                        auto &rai_info_pre = sink.op.conditions[last_rai_info_index].rais[0];
+                        sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
+                                                                          rai_info->rai->rai_direction ==
+                                                                          RAIDirection::PKFK &&
+                                                                          rai_info->compact_list != nullptr);
+                    }
+
+                    last_rai_info_part = 0;
+                    last_rai_info_index = i;
+                }
             }
+
+            for (int i = 0; i < sink.op.other_conditions.size(); ++i) {
+                if (!sink.op.other_conditions[i].rais.empty()) {
+                    if (last_rai_info_part == 0) {
+                        auto &rai_info = sink.op.other_conditions[i].rais[0];
+                        auto &rai_info_pre = sink.op.conditions[last_rai_info_index].rais[0];
+                        sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
+                                                                          rai_info->rai->rai_direction ==
+                                                                          RAIDirection::PKFK &&
+                                                                          rai_info->compact_list != nullptr);
+                    }
+                    else {
+                        auto &rai_info = sink.op.other_conditions[i].rais[0];
+                        auto &rai_info_pre = sink.op.other_conditions[last_rai_info_index].rais[0];
+                        sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
+                                                                          rai_info->rai->rai_direction ==
+                                                                          RAIDirection::PKFK &&
+                                                                          rai_info->compact_list != nullptr);
+                    }
+
+                    last_rai_info_part = 1;
+                    last_rai_info_index = i;
+                }
+            }
+
+            if (last_rai_info_index != -1) {
+                if (last_rai_info_part == 0) {
+                    sink.op.conditions[0].rais[0]->row_bitmask = sink.op.conditions[last_rai_info_index].rais[0]->row_bitmask;
+                    sink.op.conditions[0].rais[0]->zone_bitmask = sink.op.conditions[last_rai_info_index].rais[0]->zone_bitmask;
+                }
+                else if (last_rai_info_part == 1) {
+                    sink.op.conditions[0].rais[0]->row_bitmask = sink.op.other_conditions[last_rai_info_index].rais[0]->row_bitmask;
+                    sink.op.conditions[0].rais[0]->zone_bitmask = sink.op.other_conditions[last_rai_info_index].rais[0]->zone_bitmask;
+                }
+            }
+
+            PassZoneFilter();
 
             event->FinishTask();
             return TaskExecutionResult::TASK_FINISHED;
@@ -334,19 +422,19 @@ namespace duckdb {
 
     private:
         shared_ptr<Event> event;
-        MergeSIPJoinGlobalSinkState &sink;
+        ExtendIntersectGlobalSinkState &sink;
         idx_t chunk_idx_from;
         idx_t chunk_idx_to;
         bool parallel;
     };
 
-    class MergeSIPJoinFinalizeEvent : public BasePipelineEvent {
+    class ExtendIntersectFinalizeEvent : public BasePipelineEvent {
     public:
-        MergeSIPJoinFinalizeEvent(Pipeline &pipeline_p, MergeSIPJoinGlobalSinkState &sink)
+        ExtendIntersectFinalizeEvent(Pipeline &pipeline_p, ExtendIntersectGlobalSinkState &sink)
                 : BasePipelineEvent(pipeline_p), sink(sink) {
         }
 
-        MergeSIPJoinGlobalSinkState &sink;
+        ExtendIntersectGlobalSinkState &sink;
 
     public:
         void Schedule() override {
@@ -359,7 +447,7 @@ namespace duckdb {
             if (num_threads == 1 || (ht.Count() < PARALLEL_CONSTRUCT_THRESHOLD && !context.config.verify_parallelism)) {
                 // Single-threaded finalize
                 finalize_tasks.push_back(
-                        make_uniq<MergeSIPJoinFinalizeTask>(shared_from_this(), context, sink, 0, chunk_count, false));
+                        make_uniq<ExtendIntersectFinalizeTask>(shared_from_this(), context, sink, 0, chunk_count, false));
             } else {
                 // Parallel finalize
                 auto chunks_per_thread = MaxValue<idx_t>((chunk_count + num_threads - 1) / num_threads, 1);
@@ -368,8 +456,8 @@ namespace duckdb {
                 for (idx_t thread_idx = 0; thread_idx < num_threads; thread_idx++) {
                     auto chunk_idx_from = chunk_idx;
                     auto chunk_idx_to = MinValue<idx_t>(chunk_idx_from + chunks_per_thread, chunk_count);
-                    finalize_tasks.push_back(make_uniq<MergeSIPJoinFinalizeTask>(shared_from_this(), context, sink,
-                                                                             chunk_idx_from, chunk_idx_to, true));
+                    finalize_tasks.push_back(make_uniq<ExtendIntersectFinalizeTask>(shared_from_this(), context, sink,
+                                                                                 chunk_idx_from, chunk_idx_to, true));
                     chunk_idx = chunk_idx_to;
                     if (chunk_idx == chunk_count) {
                         break;
@@ -387,27 +475,27 @@ namespace duckdb {
         static constexpr const idx_t PARALLEL_CONSTRUCT_THRESHOLD = 1048576;
     };
 
-    void MergeSIPJoinGlobalSinkState::ScheduleFinalize(Pipeline &pipeline, Event &event) {
+    void ExtendIntersectGlobalSinkState::ScheduleFinalize(Pipeline &pipeline, Event &event) {
         if (hash_table->Count() == 0) {
             hash_table->finalized = true;
             return;
         }
         hash_table->InitializePointerTable();
-        auto new_event = make_shared<MergeSIPJoinFinalizeEvent>(pipeline, *this);
+        auto new_event = make_shared<ExtendIntersectFinalizeEvent>(pipeline, *this);
         event.InsertEvent(std::move(new_event));
     }
 
-    void MergeSIPJoinGlobalSinkState::InitializeProbeSpill() {
+    void ExtendIntersectGlobalSinkState::InitializeProbeSpill() {
         lock_guard<mutex> guard(lock);
         if (!probe_spill) {
             probe_spill = make_uniq<SIPHashTable::SIPProbeSpill>(*hash_table, context, probe_types);
         }
     }
 
-    class MergeSIPJoinRepartitionTask : public ExecutorTask {
+    class ExtendIntersectRepartitionTask : public ExecutorTask {
     public:
-        MergeSIPJoinRepartitionTask(shared_ptr<Event> event_p, ClientContext &context, SIPHashTable &global_ht,
-                                SIPHashTable &local_ht)
+        ExtendIntersectRepartitionTask(shared_ptr<Event> event_p, ClientContext &context, SIPHashTable &global_ht,
+                                    SIPHashTable &local_ht)
                 : ExecutorTask(context), event(std::move(event_p)), global_ht(global_ht), local_ht(local_ht) {
         }
 
@@ -424,14 +512,14 @@ namespace duckdb {
         SIPHashTable &local_ht;
     };
 
-    class MergeSIPJoinPartitionEvent : public BasePipelineEvent {
+    class ExtendIntersectPartitionEvent : public BasePipelineEvent {
     public:
-        MergeSIPJoinPartitionEvent(Pipeline &pipeline_p, MergeSIPJoinGlobalSinkState &sink,
-                               vector<unique_ptr<SIPHashTable>> &local_hts)
+        ExtendIntersectPartitionEvent(Pipeline &pipeline_p, ExtendIntersectGlobalSinkState &sink,
+                                   vector<unique_ptr<SIPHashTable>> &local_hts)
                 : BasePipelineEvent(pipeline_p), sink(sink), local_hts(local_hts) {
         }
 
-        MergeSIPJoinGlobalSinkState &sink;
+        ExtendIntersectGlobalSinkState &sink;
         vector<unique_ptr<SIPHashTable>> &local_hts;
 
     public:
@@ -441,7 +529,7 @@ namespace duckdb {
             partition_tasks.reserve(local_hts.size());
             for (auto &local_ht : local_hts) {
                 partition_tasks.push_back(
-                        make_uniq<MergeSIPJoinRepartitionTask>(shared_from_this(), context, *sink.hash_table, *local_ht));
+                        make_uniq<ExtendIntersectRepartitionTask>(shared_from_this(), context, *sink.hash_table, *local_ht));
             }
             SetTasks(std::move(partition_tasks));
         }
@@ -453,16 +541,16 @@ namespace duckdb {
         }
     };
 
-    SinkFinalizeType PhysicalMergeSIPJoin::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
-                                                OperatorSinkFinalizeInput &input) const {
-        auto &sink = input.global_state.Cast<MergeSIPJoinGlobalSinkState>();
+    SinkFinalizeType PhysicalExtendIntersect::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+                                                    OperatorSinkFinalizeInput &input) const {
+        auto &sink = input.global_state.Cast<ExtendIntersectGlobalSinkState>();
         auto &ht = *sink.hash_table;
 
         sink.external = ht.RequiresExternalJoin(context.config, sink.local_hash_tables);
         if (sink.external) {
             // sink.perfect_join_executor.reset();
             if (ht.RequiresPartitioning(context.config, sink.local_hash_tables)) {
-                auto new_event = make_shared<MergeSIPJoinPartitionEvent>(pipeline, sink, sink.local_hash_tables);
+                auto new_event = make_shared<ExtendIntersectPartitionEvent>(pipeline, sink, sink.local_hash_tables);
                 event.InsertEvent(std::move(new_event));
             } else {
                 for (auto &local_ht : sink.local_hash_tables) {
@@ -492,7 +580,7 @@ namespace duckdb {
         // In case of a large build side or duplicates, use regular hash join
         if (!use_perfect_hash) {*/
         //    sink.perfect_join_executor.reset();
-            sink.ScheduleFinalize(pipeline, event);
+        sink.ScheduleFinalize(pipeline, event);
         // }
         sink.finalized = true;
         if (ht.Count() == 0 && EmptyResultIfRHSIsEmpty()) {
@@ -504,9 +592,9 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Operator
 //===--------------------------------------------------------------------===//
-    class MergeSIPJoinOperatorState : public CachingOperatorState {
+    class ExtendIntersectOperatorState : public CachingOperatorState {
     public:
-        explicit MergeSIPJoinOperatorState(ClientContext &context) : probe_executor(context), initialized(false) {
+        explicit ExtendIntersectOperatorState(ClientContext &context) : probe_executor(context), initialized(false) {
         }
 
         DataChunk join_keys;
@@ -525,17 +613,20 @@ namespace duckdb {
         }
     };
 
-    unique_ptr<OperatorState> PhysicalMergeSIPJoin::GetOperatorState(ExecutionContext &context) const {
+    unique_ptr<OperatorState> PhysicalExtendIntersect::GetOperatorState(ExecutionContext &context) const {
         auto &allocator = BufferAllocator::Get(context.client);
-        auto &sink = sink_state->Cast<MergeSIPJoinGlobalSinkState>();
-        auto state = make_uniq<MergeSIPJoinOperatorState>(context.client);
+        auto &sink = sink_state->Cast<ExtendIntersectGlobalSinkState>();
+        auto state = make_uniq<ExtendIntersectOperatorState>(context.client);
         //if (sink.perfect_join_executor) {
         //    state->perfect_hash_join_state = sink.perfect_join_executor->GetOperatorState(context);
         // } else {
-            state->join_keys.Initialize(allocator, condition_types);
-            for (auto &cond : conditions) {
-                state->probe_executor.AddExpression(*cond.left);
-            }
+        state->join_keys.Initialize(allocator, condition_types);
+        for (auto &cond : conditions) {
+            state->probe_executor.AddExpression(*cond.left);
+        }
+        for (auto &cond : other_conditions) {
+            state->probe_executor.AddExpression(*cond.left);
+        }
         //}
         if (sink.external) {
             state->spill_chunk.Initialize(allocator, sink.probe_types);
@@ -545,7 +636,7 @@ namespace duckdb {
         return std::move(state);
     }
 
-    string PhysicalMergeSIPJoin::ParamsToString() const {
+    string PhysicalExtendIntersect::ParamsToString() const {
         string extra_info = EnumUtil::ToString(join_type) + "\n";
 
         if (right_projection_map.empty()) {
@@ -572,10 +663,10 @@ namespace duckdb {
 
 
     // equals ProbeHashTable
-    OperatorResultType PhysicalMergeSIPJoin::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-                                                         GlobalOperatorState &gstate, OperatorState &state_p) const {
-        auto &state = state_p.Cast<MergeSIPJoinOperatorState>();
-        auto &sink = sink_state->Cast<MergeSIPJoinGlobalSinkState>();
+    OperatorResultType PhysicalExtendIntersect::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+                                                             GlobalOperatorState &gstate, OperatorState &state_p) const {
+        auto &state = state_p.Cast<ExtendIntersectOperatorState>();
+        auto &sink = sink_state->Cast<ExtendIntersectGlobalSinkState>();
         D_ASSERT(sink.finalized);
         D_ASSERT(!sink.scanned_data);
 
@@ -624,7 +715,7 @@ namespace duckdb {
             state.scan_structure = sink.hash_table->ProbeAndSpill(state.join_keys, input, *sink.probe_spill,
                                                                   state.spill_state, state.spill_chunk);
         } else {
-             // ProbeHashTable -> Probe
+            // ProbeHashTable -> Probe
             state.scan_structure = sink.hash_table->Probe(state.join_keys);
         }
         state.scan_structure->Next(state.join_keys, input, chunk);
@@ -634,28 +725,28 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Source
 //===--------------------------------------------------------------------===//
-    enum class MergeSIPJoinSourceStage : uint8_t { INIT, BUILD, PROBE, SCAN_HT, DONE };
+    enum class ExtendIntersectSourceStage : uint8_t { INIT, BUILD, PROBE, SCAN_HT, DONE };
 
-    class MergeSIPJoinLocalSourceState;
+    class ExtendIntersectLocalSourceState;
 
-    class MergeSIPJoinGlobalSourceState : public GlobalSourceState {
+    class ExtendIntersectGlobalSourceState : public GlobalSourceState {
     public:
-        MergeSIPJoinGlobalSourceState(const PhysicalMergeSIPJoin &op, ClientContext &context);
+        ExtendIntersectGlobalSourceState(const PhysicalExtendIntersect &op, ClientContext &context);
 
         //! Initialize this source state using the info in the sink
-        void Initialize(MergeSIPJoinGlobalSinkState &sink);
+        void Initialize(ExtendIntersectGlobalSinkState &sink);
         //! Try to prepare the next stage
-        void TryPrepareNextStage(MergeSIPJoinGlobalSinkState &sink);
+        void TryPrepareNextStage(ExtendIntersectGlobalSinkState &sink);
         //! Prepare the next build/probe/scan_ht stage for external hash join (must hold lock)
-        void PrepareBuild(MergeSIPJoinGlobalSinkState &sink);
-        void PrepareProbe(MergeSIPJoinGlobalSinkState &sink);
-        void PrepareScanHT(MergeSIPJoinGlobalSinkState &sink);
+        void PrepareBuild(ExtendIntersectGlobalSinkState &sink);
+        void PrepareProbe(ExtendIntersectGlobalSinkState &sink);
+        void PrepareScanHT(ExtendIntersectGlobalSinkState &sink);
         //! Assigns a task to a local source state
-        bool AssignTask(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinLocalSourceState &lstate);
+        bool AssignTask(ExtendIntersectGlobalSinkState &sink, ExtendIntersectLocalSourceState &lstate);
 
         idx_t MaxThreads() override {
             D_ASSERT(op.sink_state);
-            auto &gstate = op.sink_state->Cast<MergeSIPJoinGlobalSinkState>();
+            auto &gstate = op.sink_state->Cast<ExtendIntersectGlobalSinkState>();
 
             idx_t count;
             if (gstate.probe_spill) {
@@ -669,10 +760,10 @@ namespace duckdb {
         }
 
     public:
-        const PhysicalMergeSIPJoin &op;
+        const PhysicalExtendIntersect &op;
 
         //! For synchronizing the external hash join
-        atomic<MergeSIPJoinSourceStage> global_stage;
+        atomic<ExtendIntersectSourceStage> global_stage;
         mutex lock;
 
         //! For HT build synchronization
@@ -696,22 +787,22 @@ namespace duckdb {
         idx_t full_outer_chunks_per_thread;
     };
 
-    class MergeSIPJoinLocalSourceState : public LocalSourceState {
+    class ExtendIntersectLocalSourceState : public LocalSourceState {
     public:
-        MergeSIPJoinLocalSourceState(const PhysicalMergeSIPJoin &op, Allocator &allocator);
+        ExtendIntersectLocalSourceState(const PhysicalExtendIntersect &op, Allocator &allocator);
 
         //! Do the work this thread has been assigned
-        void ExecuteTask(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate, DataChunk &chunk);
+        void ExecuteTask(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate, DataChunk &chunk);
         //! Whether this thread has finished the work it has been assigned
         bool TaskFinished();
         //! Build, probe and scan for external hash join
-        void ExternalBuild(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate);
-        void ExternalProbe(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate, DataChunk &chunk);
-        void ExternalScanHT(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate, DataChunk &chunk);
+        void ExternalBuild(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate);
+        void ExternalProbe(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate, DataChunk &chunk);
+        void ExternalScanHT(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate, DataChunk &chunk);
 
     public:
         //! The stage that this thread was assigned work for
-        MergeSIPJoinSourceStage local_stage;
+        ExtendIntersectSourceStage local_stage;
         //! Vector with pointers here so we don't have to re-initialize
         Vector addresses;
 
@@ -738,24 +829,24 @@ namespace duckdb {
         unique_ptr<SIPHTScanState> full_outer_scan_state;
     };
 
-    unique_ptr<GlobalSourceState> PhysicalMergeSIPJoin::GetGlobalSourceState(ClientContext &context) const {
-        return make_uniq<MergeSIPJoinGlobalSourceState>(*this, context);
+    unique_ptr<GlobalSourceState> PhysicalExtendIntersect::GetGlobalSourceState(ClientContext &context) const {
+        return make_uniq<ExtendIntersectGlobalSourceState>(*this, context);
     }
 
-    unique_ptr<LocalSourceState> PhysicalMergeSIPJoin::GetLocalSourceState(ExecutionContext &context,
-                                                                       GlobalSourceState &gstate) const {
-        return make_uniq<MergeSIPJoinLocalSourceState>(*this, BufferAllocator::Get(context.client));
+    unique_ptr<LocalSourceState> PhysicalExtendIntersect::GetLocalSourceState(ExecutionContext &context,
+                                                                           GlobalSourceState &gstate) const {
+        return make_uniq<ExtendIntersectLocalSourceState>(*this, BufferAllocator::Get(context.client));
     }
 
-    MergeSIPJoinGlobalSourceState::MergeSIPJoinGlobalSourceState(const PhysicalMergeSIPJoin &op, ClientContext &context)
-            : op(op), global_stage(MergeSIPJoinSourceStage::INIT), build_chunk_count(0), build_chunk_done(0), probe_chunk_count(0),
+    ExtendIntersectGlobalSourceState::ExtendIntersectGlobalSourceState(const PhysicalExtendIntersect &op, ClientContext &context)
+            : op(op), global_stage(ExtendIntersectSourceStage::INIT), build_chunk_count(0), build_chunk_done(0), probe_chunk_count(0),
               probe_chunk_done(0), probe_count(op.children[0]->estimated_cardinality),
               parallel_scan_chunk_count(context.config.verify_parallelism ? 1 : 120) {
     }
 
-    void MergeSIPJoinGlobalSourceState::Initialize(MergeSIPJoinGlobalSinkState &sink) {
+    void ExtendIntersectGlobalSourceState::Initialize(ExtendIntersectGlobalSinkState &sink) {
         lock_guard<mutex> init_lock(lock);
-        if (global_stage != MergeSIPJoinSourceStage::INIT) {
+        if (global_stage != ExtendIntersectSourceStage::INIT) {
             // Another thread initialized
             return;
         }
@@ -765,20 +856,20 @@ namespace duckdb {
             sink.probe_spill->Finalize();
         }
 
-        global_stage = MergeSIPJoinSourceStage::PROBE;
+        global_stage = ExtendIntersectSourceStage::PROBE;
         TryPrepareNextStage(sink);
     }
 
-    void MergeSIPJoinGlobalSourceState::TryPrepareNextStage(MergeSIPJoinGlobalSinkState &sink) {
+    void ExtendIntersectGlobalSourceState::TryPrepareNextStage(ExtendIntersectGlobalSinkState &sink) {
         switch (global_stage.load()) {
-            case MergeSIPJoinSourceStage::BUILD:
+            case ExtendIntersectSourceStage::BUILD:
                 if (build_chunk_done == build_chunk_count) {
                     sink.hash_table->GetDataCollection().VerifyEverythingPinned();
                     sink.hash_table->finalized = true;
                     PrepareProbe(sink);
                 }
                 break;
-            case MergeSIPJoinSourceStage::PROBE:
+            case ExtendIntersectSourceStage::PROBE:
                 if (probe_chunk_done == probe_chunk_count) {
                     if (IsRightOuterJoin(op.join_type)) {
                         PrepareScanHT(sink);
@@ -787,7 +878,7 @@ namespace duckdb {
                     }
                 }
                 break;
-            case MergeSIPJoinSourceStage::SCAN_HT:
+            case ExtendIntersectSourceStage::SCAN_HT:
                 if (full_outer_chunk_done == full_outer_chunk_count) {
                     PrepareBuild(sink);
                 }
@@ -797,13 +888,13 @@ namespace duckdb {
         }
     }
 
-    void MergeSIPJoinGlobalSourceState::PrepareBuild(MergeSIPJoinGlobalSinkState &sink) {
-        D_ASSERT(global_stage != MergeSIPJoinSourceStage::BUILD);
+    void ExtendIntersectGlobalSourceState::PrepareBuild(ExtendIntersectGlobalSinkState &sink) {
+        D_ASSERT(global_stage != ExtendIntersectSourceStage::BUILD);
         auto &ht = *sink.hash_table;
 
         // Try to put the next partitions in the block collection of the HT
         if (!sink.external || !ht.PrepareExternalFinalize()) {
-            global_stage = MergeSIPJoinSourceStage::DONE;
+            global_stage = ExtendIntersectSourceStage::DONE;
             return;
         }
 
@@ -822,25 +913,25 @@ namespace duckdb {
 
         ht.InitializePointerTable();
 
-        global_stage = MergeSIPJoinSourceStage::BUILD;
+        global_stage = ExtendIntersectSourceStage::BUILD;
     }
 
-    void MergeSIPJoinGlobalSourceState::PrepareProbe(MergeSIPJoinGlobalSinkState &sink) {
+    void ExtendIntersectGlobalSourceState::PrepareProbe(ExtendIntersectGlobalSinkState &sink) {
         sink.probe_spill->PrepareNextProbe();
         const auto &consumer = *sink.probe_spill->consumer;
 
         probe_chunk_count = consumer.Count() == 0 ? 0 : consumer.ChunkCount();
         probe_chunk_done = 0;
 
-        global_stage = MergeSIPJoinSourceStage::PROBE;
+        global_stage = ExtendIntersectSourceStage::PROBE;
         if (probe_chunk_count == 0) {
             TryPrepareNextStage(sink);
             return;
         }
     }
 
-    void MergeSIPJoinGlobalSourceState::PrepareScanHT(MergeSIPJoinGlobalSinkState &sink) {
-        D_ASSERT(global_stage != MergeSIPJoinSourceStage::SCAN_HT);
+    void ExtendIntersectGlobalSourceState::PrepareScanHT(ExtendIntersectGlobalSinkState &sink) {
+        D_ASSERT(global_stage != ExtendIntersectSourceStage::SCAN_HT);
         auto &ht = *sink.hash_table;
 
         auto &data_collection = ht.GetDataCollection();
@@ -851,15 +942,15 @@ namespace duckdb {
         auto num_threads = TaskScheduler::GetScheduler(sink.context).NumberOfThreads();
         full_outer_chunks_per_thread = MaxValue<idx_t>((full_outer_chunk_count + num_threads - 1) / num_threads, 1);
 
-        global_stage = MergeSIPJoinSourceStage::SCAN_HT;
+        global_stage = ExtendIntersectSourceStage::SCAN_HT;
     }
 
-    bool MergeSIPJoinGlobalSourceState::AssignTask(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinLocalSourceState &lstate) {
+    bool ExtendIntersectGlobalSourceState::AssignTask(ExtendIntersectGlobalSinkState &sink, ExtendIntersectLocalSourceState &lstate) {
         D_ASSERT(lstate.TaskFinished());
 
         lock_guard<mutex> guard(lock);
         switch (global_stage.load()) {
-            case MergeSIPJoinSourceStage::BUILD:
+            case ExtendIntersectSourceStage::BUILD:
                 if (build_chunk_idx != build_chunk_count) {
                     lstate.local_stage = global_stage;
                     lstate.build_chunk_idx_from = build_chunk_idx;
@@ -868,14 +959,14 @@ namespace duckdb {
                     return true;
                 }
                 break;
-            case MergeSIPJoinSourceStage::PROBE:
+            case ExtendIntersectSourceStage::PROBE:
                 if (sink.probe_spill->consumer && sink.probe_spill->consumer->AssignChunk(lstate.probe_local_scan)) {
                     lstate.local_stage = global_stage;
                     lstate.empty_ht_probe_in_progress = false;
                     return true;
                 }
                 break;
-            case MergeSIPJoinSourceStage::SCAN_HT:
+            case ExtendIntersectSourceStage::SCAN_HT:
                 if (full_outer_chunk_idx != full_outer_chunk_count) {
                     lstate.local_stage = global_stage;
                     lstate.full_outer_chunk_idx_from = full_outer_chunk_idx;
@@ -885,7 +976,7 @@ namespace duckdb {
                     return true;
                 }
                 break;
-            case MergeSIPJoinSourceStage::DONE:
+            case ExtendIntersectSourceStage::DONE:
                 break;
             default:
                 throw InternalException("Unexpected HashJoinSourceStage in AssignTask!");
@@ -893,12 +984,12 @@ namespace duckdb {
         return false;
     }
 
-    MergeSIPJoinLocalSourceState::MergeSIPJoinLocalSourceState(const PhysicalMergeSIPJoin &op, Allocator &allocator)
-            : local_stage(MergeSIPJoinSourceStage::INIT), addresses(LogicalType::POINTER) {
+    ExtendIntersectLocalSourceState::ExtendIntersectLocalSourceState(const PhysicalExtendIntersect &op, Allocator &allocator)
+            : local_stage(ExtendIntersectSourceStage::INIT), addresses(LogicalType::POINTER) {
         auto &chunk_state = probe_local_scan.current_chunk_state;
         chunk_state.properties = ColumnDataScanProperties::ALLOW_ZERO_COPY;
 
-        auto &sink = op.sink_state->Cast<MergeSIPJoinGlobalSinkState>();
+        auto &sink = op.sink_state->Cast<ExtendIntersectGlobalSinkState>();
         probe_chunk.Initialize(allocator, sink.probe_types);
         join_keys.Initialize(allocator, op.condition_types);
         payload.Initialize(allocator, op.children[0]->types);
@@ -913,16 +1004,16 @@ namespace duckdb {
         }
     }
 
-    void MergeSIPJoinLocalSourceState::ExecuteTask(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate,
-                                               DataChunk &chunk) {
+    void ExtendIntersectLocalSourceState::ExecuteTask(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate,
+                                                   DataChunk &chunk) {
         switch (local_stage) {
-            case MergeSIPJoinSourceStage::BUILD:
+            case ExtendIntersectSourceStage::BUILD:
                 ExternalBuild(sink, gstate);
                 break;
-            case MergeSIPJoinSourceStage::PROBE:
+            case ExtendIntersectSourceStage::PROBE:
                 ExternalProbe(sink, gstate, chunk);
                 break;
-            case MergeSIPJoinSourceStage::SCAN_HT:
+            case ExtendIntersectSourceStage::SCAN_HT:
                 ExternalScanHT(sink, gstate, chunk);
                 break;
             default:
@@ -930,22 +1021,22 @@ namespace duckdb {
         }
     }
 
-    bool MergeSIPJoinLocalSourceState::TaskFinished() {
+    bool ExtendIntersectLocalSourceState::TaskFinished() {
         switch (local_stage) {
-            case MergeSIPJoinSourceStage::INIT:
-            case MergeSIPJoinSourceStage::BUILD:
+            case ExtendIntersectSourceStage::INIT:
+            case ExtendIntersectSourceStage::BUILD:
                 return true;
-            case MergeSIPJoinSourceStage::PROBE:
+            case ExtendIntersectSourceStage::PROBE:
                 return scan_structure == nullptr && !empty_ht_probe_in_progress;
-            case MergeSIPJoinSourceStage::SCAN_HT:
+            case ExtendIntersectSourceStage::SCAN_HT:
                 return full_outer_scan_state == nullptr;
             default:
                 throw InternalException("Unexpected HashJoinSourceStage in TaskFinished!");
         }
     }
 
-    void MergeSIPJoinLocalSourceState::ExternalBuild(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate) {
-        D_ASSERT(local_stage == MergeSIPJoinSourceStage::BUILD);
+    void ExtendIntersectLocalSourceState::ExternalBuild(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate) {
+        D_ASSERT(local_stage == ExtendIntersectSourceStage::BUILD);
 
         auto &ht = *sink.hash_table;
         ht.Finalize(build_chunk_idx_from, build_chunk_idx_to, true);
@@ -954,9 +1045,9 @@ namespace duckdb {
         gstate.build_chunk_done += build_chunk_idx_to - build_chunk_idx_from;
     }
 
-    void MergeSIPJoinLocalSourceState::ExternalProbe(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate,
-                                                 DataChunk &chunk) {
-        D_ASSERT(local_stage == MergeSIPJoinSourceStage::PROBE && sink.hash_table->finalized);
+    void ExtendIntersectLocalSourceState::ExternalProbe(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate,
+                                                     DataChunk &chunk) {
+        D_ASSERT(local_stage == ExtendIntersectSourceStage::PROBE && sink.hash_table->finalized);
 
         if (scan_structure) {
             // Still have elements remaining (i.e. we got >STANDARD_VECTOR_SIZE elements in the previous probe)
@@ -995,13 +1086,13 @@ namespace duckdb {
         scan_structure->Next(join_keys, payload, chunk);
     }
 
-    void MergeSIPJoinLocalSourceState::ExternalScanHT(MergeSIPJoinGlobalSinkState &sink, MergeSIPJoinGlobalSourceState &gstate,
-                                                  DataChunk &chunk) {
-        D_ASSERT(local_stage == MergeSIPJoinSourceStage::SCAN_HT);
+    void ExtendIntersectLocalSourceState::ExternalScanHT(ExtendIntersectGlobalSinkState &sink, ExtendIntersectGlobalSourceState &gstate,
+                                                      DataChunk &chunk) {
+        D_ASSERT(local_stage == ExtendIntersectSourceStage::SCAN_HT);
 
         if (!full_outer_scan_state) {
             full_outer_scan_state = make_uniq<SIPHTScanState>(sink.hash_table->GetDataCollection(),
-                                                               full_outer_chunk_idx_from, full_outer_chunk_idx_to);
+                                                              full_outer_chunk_idx_from, full_outer_chunk_idx_to);
         }
         sink.hash_table->ScanFullOuter(*full_outer_scan_state, addresses, chunk);
 
@@ -1012,24 +1103,24 @@ namespace duckdb {
         }
     }
 
-    SourceResultType PhysicalMergeSIPJoin::GetData(ExecutionContext &context, DataChunk &chunk,
-                                               OperatorSourceInput &input) const {
-        auto &sink = sink_state->Cast<MergeSIPJoinGlobalSinkState>();
-        auto &gstate = input.global_state.Cast<MergeSIPJoinGlobalSourceState>();
-        auto &lstate = input.local_state.Cast<MergeSIPJoinLocalSourceState>();
+    SourceResultType PhysicalExtendIntersect::GetData(ExecutionContext &context, DataChunk &chunk,
+                                                   OperatorSourceInput &input) const {
+        auto &sink = sink_state->Cast<ExtendIntersectGlobalSinkState>();
+        auto &gstate = input.global_state.Cast<ExtendIntersectGlobalSourceState>();
+        auto &lstate = input.local_state.Cast<ExtendIntersectLocalSourceState>();
         sink.scanned_data = true;
 
         if (!sink.external && !IsRightOuterJoin(join_type)) {
             return SourceResultType::FINISHED;
         }
 
-        if (gstate.global_stage == MergeSIPJoinSourceStage::INIT) {
+        if (gstate.global_stage == ExtendIntersectSourceStage::INIT) {
             gstate.Initialize(sink);
         }
 
         // Any call to GetData must produce tuples, otherwise the pipeline executor thinks that we're done
         // Therefore, we loop until we've produced tuples, or until the operator is actually done
-        while (gstate.global_stage != MergeSIPJoinSourceStage::DONE && chunk.size() == 0) {
+        while (gstate.global_stage != ExtendIntersectSourceStage::DONE && chunk.size() == 0) {
             if (!lstate.TaskFinished() || gstate.AssignTask(sink, lstate)) {
                 lstate.ExecuteTask(sink, gstate, chunk);
             } else {

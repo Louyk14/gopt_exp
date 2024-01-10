@@ -1,4 +1,6 @@
 #include "duckdb/storage/alist.hpp"
+#include "duckdb/storage/rai.hpp"
+#include <iostream>
 
 using namespace duckdb;
 using namespace std;
@@ -102,6 +104,7 @@ void AList::Finalize(RAIDirection direction) {
 		for (idx_t i = 0; i < source_num; i++) {
 			if (forward_map.find(i) != forward_map.end()) {
 				auto elist_size = forward_map[i]->size;
+                sort(forward_map[i]->vertices->begin(), forward_map[i]->vertices->begin() + elist_size);
 				memcpy((int64_t *)(compact_forward_list.edges.get()) + current_offset,
 				       (int64_t *)(&forward_map[i]->edges->operator[](0)), elist_size * sizeof(int64_t));
 				memcpy((int64_t *)(compact_forward_list.vertices.get()) + current_offset,
@@ -123,6 +126,7 @@ void AList::Finalize(RAIDirection direction) {
 			for (idx_t i = 0; i < target_num; i++) {
 				if (backward_map.find(i) != backward_map.end()) {
 					auto elist_size = backward_map[i]->size;
+                    sort(backward_map[i]->vertices->begin(), backward_map[i]->vertices->begin() + elist_size);
 					memcpy((int64_t *)(compact_backward_list.edges.get()) + current_offset,
 					       (int64_t *)(&backward_map[i]->edges->operator[](0)), elist_size * sizeof(int64_t));
 					memcpy((int64_t *)(compact_backward_list.vertices.get()) + current_offset,
@@ -271,6 +275,118 @@ static idx_t FetchVertexesInternal(CompactList &alist, idx_t &lpos, idx_t &rpos,
 	return result_count;
 }
 
+static idx_t FetchVertexesInternalMerge(CompactList &alist, std::vector<idx_t> &lpos, idx_t &rpos, std::vector<Vector*> &rvector, idx_t rsize,
+                                   SelectionVector &rsel, Vector &r0vector, duckdb::vector<RAIInfo*>& merge_rais) {
+    assert(r0vector.GetVectorType() == VectorType::FLAT_VECTOR);
+    if (rpos >= rsize) {
+        return 0;
+    }
+
+    UnifiedVectorFormat right_data;
+    rvector[0]->ToUnifiedFormat(rsize, right_data);
+    auto rdata = (int64_t *)right_data.data;
+    auto r0data = (int64_t *)FlatVector::GetData(r0vector);
+    idx_t result_count = 0;
+
+    std::vector<UnifiedVectorFormat> right_selects(merge_rais.size() + 1);
+    std::vector<int64_t*> datas(merge_rais.size() + 1);
+    for (int i = 1; i < merge_rais.size(); ++i) {
+        rvector[i]->ToUnifiedFormat(rsize, right_selects[i]);
+        datas[i] = (int64_t*)right_selects[i].data;
+    }
+
+    if (!right_data.validity.AllValid()) {
+        std::cout << "may be wrong" << std::endl;
+        while (rpos < rsize) {
+            idx_t right_position = right_data.sel->get_index(rpos);
+            if (!right_data.validity.RowIsValid(right_position)) {
+                continue;
+            }
+            auto rid = rdata[right_position];
+            auto offset = alist.offsets.operator[](rid);
+            auto length = alist.sizes.operator[](rid);
+            auto result_size = std::min(length - lpos[0], STANDARD_VECTOR_SIZE - result_count);
+            memcpy(r0data + result_count, alist.vertices.get() + (offset + lpos[0]), result_size * sizeof(int64_t));
+            for (idx_t i = 0; i < result_size; i++) {
+                rsel.set_index(result_count++, rpos);
+            }
+            lpos[0] += result_size;
+            if (lpos[0] == length) {
+                lpos[0] = 0;
+                rpos++;
+            }
+            if (result_count == STANDARD_VECTOR_SIZE) {
+                return result_count;
+            }
+        }
+    } else {
+        std::vector<CompactList*> compact_lists(merge_rais.size() + 1, NULL);
+        for (int i = 0; i < merge_rais.size(); ++i) {
+            if (merge_rais[i]->forward)
+                compact_lists[i] = &merge_rais[i]->rai->alist->compact_forward_list;
+            else
+                compact_lists[i] = &merge_rais[i]->rai->alist->compact_backward_list;
+        }
+
+        while (rpos < rsize) {
+            idx_t right_position = right_data.sel->get_index(rpos);
+            auto rid = rdata[right_position];
+            auto offset = alist.offsets.operator[](rid);
+            auto length = alist.sizes.operator[](rid);
+            auto result_size = std::min(length - lpos[0], STANDARD_VECTOR_SIZE - result_count);
+
+            bool possible = true;
+            for (int j = 0; j < result_size; ++j) {
+                idx_t nid = *(alist.vertices.get() + (offset + lpos[0] + j));
+                int agrees = 0;
+                // check in other lists
+                for (int k = 1; k < merge_rais.size(); ++k) {
+                    auto right_position_k = right_selects[k].sel->get_index(rpos);
+                    // if (right_position != right_position_k) {
+                    //     std::cout << rpos << " " << right_position << " " << right_position_k << std::endl;
+                    // }
+                    auto rid_other = datas[k][right_position_k];
+                    auto offsetk = compact_lists[k]->offsets.operator[](rid_other);
+                    auto lengthk = compact_lists[k]->sizes.operator[](rid_other);
+                    if (lpos[k] >= lengthk) {
+                        possible = false;
+                        break;
+                    }
+                    idx_t nid_other = *(compact_lists[k]->vertices.get() + (offsetk + lpos[k]));
+                    if (nid_other < nid) {
+                        lpos[k]++;
+                        --k;
+                        continue;
+                    }
+                    else if (nid_other == nid) {
+                        agrees++;
+                        continue;
+                    }
+                    else
+                        break;
+                }
+                if (!possible)
+                    break;
+                if (agrees == merge_rais.size() - 1) {
+                    memcpy(r0data + result_count, &nid, sizeof(int64_t));
+                    rsel.set_index(result_count++, rpos);
+                }
+            }
+
+            lpos[0] += result_size;
+            if (lpos[0] == length) {
+                for (int i = 0; i < lpos.size(); ++i)
+                    lpos[i] = 0;
+                rpos++;
+            }
+            if (result_count == STANDARD_VECTOR_SIZE) {
+                return result_count;
+            }
+        }
+    }
+    return result_count;
+}
+
 idx_t AList::Fetch(idx_t &lpos, idx_t &rpos, Vector &rvector, idx_t rsize, SelectionVector &rsel, Vector &r0vector,
                    Vector &r1vector, bool forward) {
 	if (forward) {
@@ -285,6 +401,14 @@ idx_t AList::FetchVertexes(idx_t &lpos, idx_t &rpos, Vector &rvector, idx_t rsiz
 		return FetchVertexesInternal(compact_forward_list, lpos, rpos, rvector, rsize, rsel, r0vector);
 	}
 	return FetchVertexesInternal(compact_backward_list, lpos, rpos, rvector, rsize, rsel, r0vector);
+}
+
+idx_t AList::FetchVertexes(std::vector<idx_t> &lpos, idx_t &rpos, std::vector<Vector*> &rvector, idx_t rsize, SelectionVector &rsel,
+                           Vector &r0vector, vector<RAIInfo*>& merge_rais) {
+    if (merge_rais[0]->forward) {
+        return FetchVertexesInternalMerge(compact_forward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais);
+    }
+    return FetchVertexesInternalMerge(compact_backward_list, lpos, rpos, rvector, rsize, rsel, r0vector, merge_rais);
 }
 
 static idx_t BuildZoneFilterInternal(CompactList &alist, data_ptr_t *hashmap, idx_t size, bitmask_vector &zone_filter) {

@@ -16,7 +16,7 @@ namespace duckdb {
 
     SIPHashTable::SIPHashTable(BufferManager &buffer_manager_p, const vector<JoinCondition> &conditions_p,
                                  vector<LogicalType> btypes, JoinType type_p)
-            : buffer_manager(buffer_manager_p), conditions(conditions_p), build_types(std::move(btypes)), entry_size(0),
+            : buffer_manager(buffer_manager_p), conditions(conditions_p), other_conditions(conditions_p), build_types(std::move(btypes)), entry_size(0),
               tuple_size(0), vfound(Value::BOOLEAN(false)), join_type(type_p), finalized(false), has_null(false),
               external(false), radix_bits(4), partition_start(0), partition_end(0) {
         for (auto &condition : conditions) {
@@ -38,6 +38,74 @@ namespace duckdb {
 
             condition_types.push_back(type);
         }
+        // at least one equality is necessary
+        D_ASSERT(!equality_types.empty());
+
+        // Types for the layout
+        vector<LogicalType> layout_types(condition_types);
+        layout_types.insert(layout_types.end(), build_types.begin(), build_types.end());
+        if (IsRightOuterJoin(join_type)) {
+            // full/right outer joins need an extra bool to keep track of whether or not a tuple has found a matching entry
+            // we place the bool before the NEXT pointer
+            layout_types.emplace_back(LogicalType::BOOLEAN);
+        }
+        layout_types.emplace_back(LogicalType::HASH);
+        layout.Initialize(layout_types, false);
+
+        const auto &offsets = layout.GetOffsets();
+        tuple_size = offsets[condition_types.size() + build_types.size()];
+        pointer_offset = offsets.back();
+        entry_size = layout.GetRowWidth();
+
+        data_collection = make_uniq<TupleDataCollection>(buffer_manager, layout);
+        sink_collection =
+                make_uniq<RadixPartitionedTupleData>(buffer_manager, layout, radix_bits, layout.ColumnCount() - 1);
+    }
+
+    SIPHashTable::SIPHashTable(BufferManager &buffer_manager_p, const vector<JoinCondition> &conditions_p, const vector<JoinCondition> &other_conditions_p,
+                               vector<LogicalType> btypes, JoinType type_p)
+            : buffer_manager(buffer_manager_p), conditions(conditions_p), other_conditions(other_conditions_p), build_types(std::move(btypes)), entry_size(0),
+              tuple_size(0), vfound(Value::BOOLEAN(false)), join_type(type_p), finalized(false), has_null(false),
+              external(false), radix_bits(4), partition_start(0), partition_end(0) {
+        for (auto &condition : conditions) {
+            D_ASSERT(condition.left->return_type == condition.right->return_type);
+            auto type = condition.left->return_type;
+            if (condition.comparison == ExpressionType::COMPARE_EQUAL ||
+                condition.comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM ||
+                condition.comparison == ExpressionType::COMPARE_DISTINCT_FROM) {
+                // all equality conditions should be at the front
+                // all other conditions at the back
+                // this assert checks that
+                D_ASSERT(equality_types.size() == condition_types.size());
+                equality_types.push_back(type);
+            }
+
+            predicates.push_back(condition.comparison);
+            null_values_are_equal.push_back(condition.comparison == ExpressionType::COMPARE_DISTINCT_FROM ||
+                                            condition.comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM);
+
+            condition_types.push_back(type);
+        }
+        for (auto &condition : other_conditions) {
+            D_ASSERT(condition.left->return_type == condition.right->return_type);
+            auto type = condition.left->return_type;
+            if (condition.comparison == ExpressionType::COMPARE_EQUAL ||
+                condition.comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM ||
+                condition.comparison == ExpressionType::COMPARE_DISTINCT_FROM) {
+                // all equality conditions should be at the front
+                // all other conditions at the back
+                // this assert checks that
+                D_ASSERT(equality_types.size() == condition_types.size());
+                equality_types.push_back(type);
+            }
+
+            predicates.push_back(condition.comparison);
+            null_values_are_equal.push_back(condition.comparison == ExpressionType::COMPARE_DISTINCT_FROM ||
+                                            condition.comparison == ExpressionType::COMPARE_NOT_DISTINCT_FROM);
+
+            condition_types.push_back(type);
+        }
+
         // at least one equality is necessary
         D_ASSERT(!equality_types.empty());
 
@@ -400,6 +468,50 @@ namespace duckdb {
         }
     }
 
+    void SIPHashTable::GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist) {
+        // initialize bitmask filters
+        auto zone_size = (rai_info.left_cardinalities[0] / STANDARD_VECTOR_SIZE) + 1;
+        rai_info.row_bitmask = make_uniq<bitmask_vector>(zone_size * STANDARD_VECTOR_SIZE);
+        rai_info.zone_bitmask = make_uniq<bitmask_vector>(zone_size);
+        if (rai_info.passing_tables[1] != 0) {
+            auto extra_zone_size = (rai_info.left_cardinalities[1] / STANDARD_VECTOR_SIZE) + 1;
+            rai_info.extra_row_bitmask = make_uniq<bitmask_vector>(extra_zone_size * STANDARD_VECTOR_SIZE);
+            rai_info.extra_zone_bitmask = make_uniq<bitmask_vector>(extra_zone_size);
+        }
+
+        // fill bitmask filters
+        Vector keys(LogicalType::BIGINT);
+        auto key_data = FlatVector::GetData<int64_t>(keys);
+        if (use_alist) {
+            idx_t chunk_idx_from = 0;
+            idx_t chunk_idx_to = data_collection->ChunkCount();
+            TupleDataChunkIterator iterator(*data_collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED,
+                                            chunk_idx_from, chunk_idx_to, false);
+            const auto row_locations = iterator.GetRowLocations();
+            do {
+                const auto count = iterator.GetCurrentChunkCount();
+                for (idx_t i = 0; i < count; ++i) {
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
+                }
+                FillBitmaskWithAListIncremental(keys, count, rai_info, rai_info_pre.row_bitmask);
+            } while (iterator.Next());
+        }
+        else {
+            idx_t chunk_idx_from = 0;
+            idx_t chunk_idx_to = data_collection->ChunkCount();
+            TupleDataChunkIterator iterator(*data_collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED,
+                                            chunk_idx_from, chunk_idx_to, false);
+            const auto row_locations = iterator.GetRowLocations();
+            do {
+                const auto count = iterator.GetCurrentChunkCount();
+                for (idx_t i = 0; i < count; ++i) {
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
+                }
+                FillBitmaskWithoutAListIncremental(keys, count, rai_info, rai_info_pre.row_bitmask);
+            } while (iterator.Next());
+        }
+    }
+
     void SIPHashTable::FillBitmaskWithAList(Vector &key_vector, idx_t count, RAIInfo &rai_info) {
         UnifiedVectorFormat key_data;
         key_vector.ToUnifiedFormat(count, key_data);
@@ -457,6 +569,78 @@ namespace duckdb {
             row_bitmask[keys[pos]] = true;
             auto zone_id = keys[pos] / STANDARD_VECTOR_SIZE;
             zone_bitmask[zone_id] = true;
+        }
+    }
+
+    void SIPHashTable::FillBitmaskWithAListIncremental(Vector &key_vector, idx_t count, RAIInfo &rai_info,
+                                                       shared_ptr<bitmask_vector> row_bitmask_pre) {
+        UnifiedVectorFormat key_data;
+        key_vector.ToUnifiedFormat(count, key_data);
+        auto *keys = UnifiedVectorFormat::GetData<int64_t>(key_data);
+        auto key_nullmask = key_data.validity;
+        auto &row_bitmask = *rai_info.row_bitmask;
+        auto &zone_bitmask = *rai_info.zone_bitmask;
+        auto &row_bitmask_pre_get = *row_bitmask_pre;
+
+        auto compact_list = rai_info.compact_list;
+        if (rai_info.passing_tables[1] == 0) {
+            for (idx_t i = 0; i < count; i++) {
+                idx_t pos = key_data.sel->get_index(i);
+
+                auto offset = compact_list->offsets[keys[pos]];
+                auto size = compact_list->sizes[keys[pos]];
+                for (idx_t j = 0; j < size; j++) {
+                    auto id = compact_list->edges[offset + j];
+                    if (row_bitmask_pre_get[id]) {
+                        row_bitmask[id] = true;
+                        auto zone_id = id / STANDARD_VECTOR_SIZE;
+                        zone_bitmask[zone_id] = true;
+                    }
+                }
+            }
+        } else {
+            std::cout << "Error may Exists: using extra_row_bitmask" << std::endl;
+            auto &extra_zone_filter = *rai_info.extra_row_bitmask;
+            auto &extra_zone_sel = *rai_info.extra_zone_bitmask;
+            for (idx_t i = 0; i < count; i++) {
+                idx_t pos = key_data.sel->get_index(i);
+                auto offset = compact_list->offsets[keys[pos]];
+                auto size = compact_list->sizes[keys[pos]];
+                for (idx_t j = 0; j < size; j++) {
+                    auto id = compact_list->edges[offset + j];
+                    row_bitmask[id] = true;
+                    auto zone_id = id / STANDARD_VECTOR_SIZE;
+                    zone_bitmask[zone_id] = true;
+                }
+                for (idx_t j = 0; j < size; j++) {
+                    auto id = compact_list->vertices[offset + j];
+                    extra_zone_filter[id] = true;
+                    auto zone_id = id / STANDARD_VECTOR_SIZE;
+                    extra_zone_sel[zone_id] = true;
+                }
+            }
+        }
+    }
+
+    void SIPHashTable::FillBitmaskWithoutAListIncremental(Vector &key_vector, idx_t count, RAIInfo &rai_info, shared_ptr<bitmask_vector> row_bitmask_pre) {
+        UnifiedVectorFormat key_data;
+        key_vector.ToUnifiedFormat(count, key_data);
+        auto *keys = UnifiedVectorFormat::GetData<int64_t>(key_data);
+        auto &row_bitmask = *rai_info.row_bitmask;
+        auto &zone_bitmask = *rai_info.zone_bitmask;
+        auto &row_bitmask_pre_get = *row_bitmask_pre;
+
+        for (idx_t i = 0; i < count; i++) {
+            idx_t pos = key_data.sel->get_index(i);
+            long long keys_pos = keys[pos];
+            if (row_bitmask_pre_get[keys_pos]) {
+                row_bitmask[keys_pos] = true;
+                auto zone_id = keys_pos / STANDARD_VECTOR_SIZE;
+                zone_bitmask[zone_id] = true;
+            }
+            else {
+                std::cout << "remove a value" << std::endl;
+            }
         }
     }
 
@@ -595,6 +779,8 @@ namespace duckdb {
     }
 
     void SIPScanStructure::NextInnerJoin(DataChunk &keys, DataChunk &left, DataChunk &result) {
+        if (result.ColumnCount() != left.ColumnCount() + ht.build_types.size())
+            int to_stop = 1;
         D_ASSERT(result.ColumnCount() == left.ColumnCount() + ht.build_types.size());
         if (this->count == 0) {
             // no pointers left to chase

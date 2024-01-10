@@ -715,6 +715,8 @@ static bool IsComplexType(const LogicalType &type) {
 
 void ColumnDataCollection::Append(ColumnDataAppendState &state, DataChunk &input) {
 	D_ASSERT(!finished_append);
+    if (types != input.GetTypes())
+        int to_stop = 0;
 	D_ASSERT(types == input.GetTypes());
 
 	auto &segment = *segments.back();

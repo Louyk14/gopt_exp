@@ -38,6 +38,8 @@ struct CompactList {
 	unique_ptr<int64_t[]> vertices;
 };
 
+class RAIInfo;
+
 class AList {
 public:
 	AList(string alias)
@@ -59,6 +61,8 @@ public:
 	            Vector &r1vector, bool forward);
 	idx_t FetchVertexes(idx_t &lpos, idx_t &rpos, Vector &rvector, idx_t rsize, SelectionVector &rsel, Vector &r0vector,
 	                    bool forward);
+    idx_t FetchVertexes(std::vector<idx_t> &lpos, idx_t &rpos, std::vector<Vector*> &rvector, idx_t rsize, SelectionVector &rsel, Vector &r0vector,
+                        vector<RAIInfo*>& merge_rais);
 	// WARNING: Deprecated
 	idx_t BuildZoneFilter(data_ptr_t *hashmap, idx_t size, bitmask_vector &zone_filter, bool forward);
 	// WARNING: Deprecated
