@@ -402,7 +402,7 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
             physical_plan = move(physical_plan_by_hand);
         }
         else if (pb_file == "7-1") {
-            auto physical_plan_by_hand = GenerateIC71PlanGLogue();
+            auto physical_plan_by_hand = GenerateIC71PlanGLogueNoIntersect();
             physical_plan = move(physical_plan_by_hand);
         }
         else if (pb_file == "job1a") {
@@ -5062,6 +5062,241 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC71PlanGLogue() {
     return projection;
 }
 
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC71PlanGLogueNoIntersect() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_person = "person";
+    string table_edge_knows = "knows";
+    string table_vertex_comment = "comment";
+    string table_edge_likes_comment = "likes_comment";
+
+    idx_t table_index_person1 = 6;
+    idx_t table_index_person2 = 8;
+    idx_t table_index_knows = 7;
+    idx_t table_index_comment = 11;
+    idx_t table_index_likes_comment = 12;
+
+
+    auto table_or_view_person = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                  table_vertex_person, OnEntryNotFound::RETURN_NULL);
+    auto &table_person = table_or_view_person->Cast<TableCatalogEntry>();
+
+    auto table_or_view_knows = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                 table_edge_knows, OnEntryNotFound::RETURN_NULL);
+    auto &table_knows = table_or_view_knows->Cast<TableCatalogEntry>();
+
+    auto table_or_view_comment = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                   table_vertex_comment, OnEntryNotFound::RETURN_NULL);
+    auto &table_comment = table_or_view_comment->Cast<TableCatalogEntry>();
+
+    auto table_or_view_likes_comment = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                         table_edge_likes_comment, OnEntryNotFound::RETURN_NULL);
+    auto &table_likes_comment = table_or_view_likes_comment->Cast<TableCatalogEntry>();
+
+
+    vector<idx_t> comment_ids{COLUMN_IDENTIFIER_ROW_ID, 10, 4};
+    vector<LogicalType> get_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_comment = "c";
+    vector<LogicalType> table_types_comment;
+    vector<unique_ptr<Expression>> filter_comment;
+    unique_ptr<LogicalGet> get_op_comment = move(
+            getLogicalGet(*this, table_comment, alias_comment, table_index_comment, table_types_comment));
+    unique_ptr<TableFilterSet> table_filters_comment = NULL;
+    unique_ptr<PhysicalTableScan> scan_comment = make_uniq<PhysicalTableScan>(get_comment_types,
+                                                                              get_op_comment->function,
+                                                                              get_op_comment->table_index,
+                                                                              move(get_op_comment->bind_data),
+                                                                              table_types_comment, comment_ids,
+                                                                              move(filter_comment), vector<column_t>(),
+                                                                              get_op_comment->names,
+                                                                              std::move(table_filters_comment),
+                                                                              get_op_comment->estimated_cardinality,
+                                                                              get_op_comment->extra_info);
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> person1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_person1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_person1 = "p1";
+    vector<LogicalType> table_types_person1;
+    unique_ptr<LogicalGet> get_op_person1 = move(
+            getLogicalGet(*this, table_person, alias_person1, table_index_person1, table_types_person1));
+    vector<unique_ptr<Expression>> filter_person1;
+    unique_ptr<TableFilterSet> table_filters_person1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_person1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_person1 = make_uniq<PhysicalTableScan>(get_person1_types,
+                                                                              get_op_person1->function,
+                                                                              get_op_person1->table_index,
+                                                                              move(get_op_person1->bind_data),
+                                                                              table_types_person1, person1_ids,
+                                                                              move(filter_person1), vector<column_t>(),
+                                                                              get_op_person1->names,
+                                                                              std::move(table_filters_person1),
+                                                                              get_op_person1->estimated_cardinality,
+                                                                              get_op_person1->extra_info);
+
+    vector<JoinCondition> cond_hascreator;
+    JoinCondition join_condition_hascreator;
+    join_condition_hascreator.left = make_uniq<BoundReferenceExpression>("m_creator_rowid", LogicalType::BIGINT, 1);
+    join_condition_hascreator.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_hascreator.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_hascreator = make_uniq<RAIInfo>();
+    rai_info_hascreator->rai = table_comment.GetStorage().info->rais[0].get();
+    rai_info_hascreator->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_hascreator->forward = true;
+    rai_info_hascreator->vertex = &table_person;
+    rai_info_hascreator->vertex_id = table_index_person2;
+    rai_info_hascreator->passing_tables[0] = table_index_comment;
+    rai_info_hascreator->left_cardinalities[0] = table_comment.GetStorage().info->cardinality;
+    rai_info_hascreator->compact_list = &rai_info_hascreator->rai->alist->compact_forward_list;
+
+    join_condition_hascreator.rais.push_back(move(rai_info_hascreator));
+    cond_hascreator.push_back(move(join_condition_hascreator));
+
+    LogicalComparisonJoin join_hascreator_op(JoinType::INNER);
+    vector<LogicalType> output_hascreator_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                LogicalType::BIGINT};
+    join_hascreator_op.types = output_hascreator_types;
+    vector<idx_t> right_projection_map_hascreator{1};
+    vector<idx_t> merge_project_map_hascreator;
+    vector<LogicalType> delim_types_hascreator;
+    auto join_hascreator = make_uniq<PhysicalSIPJoin>(join_hascreator_op, move(scan_comment), move(scan_person1),
+                                                      move(cond_hascreator),
+                                                      JoinType::INNER, left_projection_map,
+                                                      right_projection_map_hascreator,
+                                                      delim_types_hascreator, 0);
+
+    vector<idx_t> person2_ids{COLUMN_IDENTIFIER_ROW_ID, 0, 1, 2};
+    vector<LogicalType> get_person2_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                          LogicalType::VARCHAR};
+    string alias_person2 = "p2";
+    vector<LogicalType> table_types_person2;
+    vector<unique_ptr<Expression>> filter_person2;
+    unique_ptr<LogicalGet> get_op_person2 = move(
+            getLogicalGet(*this, table_person, alias_person2, table_index_person2, table_types_person2));
+    unique_ptr<TableFilterSet> table_filters_person2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_person2 = make_uniq<PhysicalTableScan>(get_person2_types,
+                                                                              get_op_person2->function,
+                                                                              get_op_person2->table_index,
+                                                                              move(get_op_person2->bind_data),
+                                                                              table_types_person2, person2_ids,
+                                                                              move(filter_person2), vector<column_t>(),
+                                                                              get_op_person2->names,
+                                                                              std::move(table_filters_person2),
+                                                                              get_op_person2->estimated_cardinality,
+                                                                              get_op_person2->extra_info);
+
+    vector<JoinCondition> cond_knows;
+    JoinCondition join_condition_knows;
+    join_condition_knows.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_knows.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
+    join_condition_knows.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_knows = make_uniq<RAIInfo>();
+    rai_info_knows->rai = table_knows.GetStorage().info->rais[0].get();
+    rai_info_knows->rai_type = RAIType::TARGET_EDGE;
+    rai_info_knows->forward = true;
+    rai_info_knows->vertex = &table_person;
+    rai_info_knows->vertex_id = table_index_person2;
+    rai_info_knows->passing_tables[0] = table_index_person2;
+    rai_info_knows->left_cardinalities[0] = table_person.GetStorage().info->cardinality;
+    // rai_info_knows->compact_list = &rai_info_knows->rai->alist->compact_backward_list;
+
+    join_condition_knows.rais.push_back(move(rai_info_knows));
+    cond_knows.push_back(move(join_condition_knows));
+
+    LogicalComparisonJoin join_knows_op(JoinType::INNER);
+    vector<LogicalType> output_knows_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                             LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR};
+    join_knows_op.types = output_knows_types;
+    vector<idx_t> right_projection_map_knows{0, 2};
+    vector<idx_t> merge_project_map_knows;
+    vector<LogicalType> delim_types_knows;
+    auto join_knows = make_uniq<PhysicalMergeSIPJoin>(join_knows_op, move(scan_person2), move(join_hascreator),
+                                                           move(cond_knows), JoinType::INNER, left_projection_map,
+                                                           right_projection_map_knows,
+                                                           merge_project_map_knows, delim_types_knows, 0);
+
+
+    vector<idx_t> likes_comment_ids{3, 4};
+    vector<LogicalType> get_likes_comment_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_likes_comment = "l";
+    vector<LogicalType> table_types_likes_comment;
+    vector<unique_ptr<Expression>> filter_likes_comment;
+    unique_ptr<LogicalGet> get_op_likes_comment = move(
+            getLogicalGet(*this, table_likes_comment, alias_likes_comment, table_index_likes_comment, table_types_likes_comment));
+    unique_ptr<TableFilterSet> table_filters_likes_comment = NULL;
+    unique_ptr<PhysicalTableScan> scan_likes_comment = make_uniq<PhysicalTableScan>(get_likes_comment_types,
+                                                                              get_op_likes_comment->function,
+                                                                              get_op_likes_comment->table_index,
+                                                                              move(get_op_likes_comment->bind_data),
+                                                                              table_types_likes_comment, likes_comment_ids,
+                                                                              move(filter_likes_comment), vector<column_t>(),
+                                                                              get_op_likes_comment->names,
+                                                                              std::move(table_filters_likes_comment),
+                                                                              get_op_likes_comment->estimated_cardinality,
+                                                                              get_op_likes_comment->extra_info);
+
+    vector<JoinCondition> cond_likes_comment;
+    JoinCondition join_condition_likes_comment, join_condition_likes_comment_2;
+    join_condition_likes_comment.left = make_uniq<BoundReferenceExpression>("l_personid_rowid", LogicalType::BIGINT, 0);
+    join_condition_likes_comment.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_likes_comment.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_likes_comment = make_uniq<RAIInfo>();
+    rai_info_likes_comment->rai = table_likes_comment.GetStorage().info->rais[0].get();
+    rai_info_likes_comment->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_likes_comment->forward = true;
+    rai_info_likes_comment->vertex = &table_person;
+    rai_info_likes_comment->vertex_id = table_index_person2;
+    rai_info_likes_comment->passing_tables[0] = table_index_likes_comment;
+    rai_info_likes_comment->left_cardinalities[0] = table_likes_comment.GetStorage().info->cardinality;
+    rai_info_likes_comment->compact_list = &rai_info_likes_comment->rai->alist->compact_forward_list;
+
+    join_condition_likes_comment.rais.push_back(move(rai_info_likes_comment));
+    cond_likes_comment.push_back(move(join_condition_likes_comment));
+
+    join_condition_likes_comment_2.left = make_uniq<BoundReferenceExpression>("l_messageid_rowid", LogicalType::BIGINT, 1);
+    join_condition_likes_comment_2.right = make_uniq<BoundReferenceExpression>("comment_rowid", LogicalType::BIGINT, 4);
+    join_condition_likes_comment_2.comparison = ExpressionType::COMPARE_EQUAL;
+    cond_likes_comment.push_back(move(join_condition_likes_comment_2));
+
+    LogicalComparisonJoin join_likes_comment_op(JoinType::INNER);
+    vector<LogicalType> output_likes_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                   LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_likes_comment_op.types = output_likes_comment_types;
+    vector<idx_t> right_projection_map_likes_comment{1, 2, 3, 5};
+    vector<idx_t> merge_project_map_likes_comment;
+    vector<LogicalType> delim_types_likes_comment;
+    auto join_likes_comment = make_uniq<PhysicalSIPJoin>(join_likes_comment_op, move(scan_likes_comment),
+                                                           move(join_knows), move(cond_likes_comment),
+                                                           JoinType::INNER, left_projection_map,
+                                                           right_projection_map_likes_comment,
+                                                           delim_types_likes_comment, 0);
+
+
+    // project
+    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                     LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 2);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("p_lastname", LogicalType::VARCHAR, 4);
+    auto result_col3 = make_uniq<BoundReferenceExpression>("m_content", LogicalType::VARCHAR, 5);
+
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    select_list.push_back(move(result_col3));
+
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(join_likes_comment));
+
+    return projection;
+}
 
 unique_ptr<PhysicalOperator> ClientContext::GenerateJOB1aPlan(ClientContext& context) {
     vector<idx_t> left_projection_map, right_projection_map;

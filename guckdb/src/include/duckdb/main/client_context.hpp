@@ -217,6 +217,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
 
     unique_ptr<PhysicalOperator> GenerateIC71PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC71PlanGLogueNoIntersect();
 
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
