@@ -5189,93 +5189,93 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC71PlanGLogueNoIntersect() 
                                                                               get_op_person2->estimated_cardinality,
                                                                               get_op_person2->extra_info);
 
-    vector<JoinCondition> cond_knows;
-    JoinCondition join_condition_knows;
-    join_condition_knows.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
-    join_condition_knows.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
-    join_condition_knows.comparison = ExpressionType::COMPARE_EQUAL;
-
-    auto rai_info_knows = make_uniq<RAIInfo>();
-    rai_info_knows->rai = table_knows.GetStorage().info->rais[0].get();
-    rai_info_knows->rai_type = RAIType::TARGET_EDGE;
-    rai_info_knows->forward = true;
-    rai_info_knows->vertex = &table_person;
-    rai_info_knows->vertex_id = table_index_person2;
-    rai_info_knows->passing_tables[0] = table_index_person2;
-    rai_info_knows->left_cardinalities[0] = table_person.GetStorage().info->cardinality;
-    // rai_info_knows->compact_list = &rai_info_knows->rai->alist->compact_backward_list;
-
-    join_condition_knows.rais.push_back(move(rai_info_knows));
-    cond_knows.push_back(move(join_condition_knows));
-
-    LogicalComparisonJoin join_knows_op(JoinType::INNER);
-    vector<LogicalType> output_knows_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
-                                             LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR};
-    join_knows_op.types = output_knows_types;
-    vector<idx_t> right_projection_map_knows{0, 2};
-    vector<idx_t> merge_project_map_knows;
-    vector<LogicalType> delim_types_knows;
-    auto join_knows = make_uniq<PhysicalMergeSIPJoin>(join_knows_op, move(scan_person2), move(join_hascreator),
-                                                           move(cond_knows), JoinType::INNER, left_projection_map,
-                                                           right_projection_map_knows,
-                                                           merge_project_map_knows, delim_types_knows, 0);
-
-
-    vector<idx_t> likes_comment_ids{3, 4};
-    vector<LogicalType> get_likes_comment_types{LogicalType::BIGINT, LogicalType::BIGINT};
-    string alias_likes_comment = "l";
-    vector<LogicalType> table_types_likes_comment;
-    vector<unique_ptr<Expression>> filter_likes_comment;
-    unique_ptr<LogicalGet> get_op_likes_comment = move(
-            getLogicalGet(*this, table_likes_comment, alias_likes_comment, table_index_likes_comment, table_types_likes_comment));
-    unique_ptr<TableFilterSet> table_filters_likes_comment = NULL;
-    unique_ptr<PhysicalTableScan> scan_likes_comment = make_uniq<PhysicalTableScan>(get_likes_comment_types,
-                                                                              get_op_likes_comment->function,
-                                                                              get_op_likes_comment->table_index,
-                                                                              move(get_op_likes_comment->bind_data),
-                                                                              table_types_likes_comment, likes_comment_ids,
-                                                                              move(filter_likes_comment), vector<column_t>(),
-                                                                              get_op_likes_comment->names,
-                                                                              std::move(table_filters_likes_comment),
-                                                                              get_op_likes_comment->estimated_cardinality,
-                                                                              get_op_likes_comment->extra_info);
-
     vector<JoinCondition> cond_likes_comment;
-    JoinCondition join_condition_likes_comment, join_condition_likes_comment_2;
-    join_condition_likes_comment.left = make_uniq<BoundReferenceExpression>("l_personid_rowid", LogicalType::BIGINT, 0);
-    join_condition_likes_comment.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    JoinCondition join_condition_likes_comment;
+    join_condition_likes_comment.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_likes_comment.right = make_uniq<BoundReferenceExpression>("comment_rowid", LogicalType::BIGINT, 0);
     join_condition_likes_comment.comparison = ExpressionType::COMPARE_EQUAL;
 
     auto rai_info_likes_comment = make_uniq<RAIInfo>();
     rai_info_likes_comment->rai = table_likes_comment.GetStorage().info->rais[0].get();
-    rai_info_likes_comment->rai_type = RAIType::EDGE_SOURCE;
-    rai_info_likes_comment->forward = true;
+    rai_info_likes_comment->rai_type = RAIType::SOURCE_EDGE;
+    rai_info_likes_comment->forward = false;
     rai_info_likes_comment->vertex = &table_person;
     rai_info_likes_comment->vertex_id = table_index_person2;
-    rai_info_likes_comment->passing_tables[0] = table_index_likes_comment;
-    rai_info_likes_comment->left_cardinalities[0] = table_likes_comment.GetStorage().info->cardinality;
-    rai_info_likes_comment->compact_list = &rai_info_likes_comment->rai->alist->compact_forward_list;
+    rai_info_likes_comment->passing_tables[0] = table_index_person2;
+    rai_info_likes_comment->left_cardinalities[0] = table_person.GetStorage().info->cardinality;
+    // rai_info_likes_comment->compact_list = &rai_info_likes_comment->rai->alist->compact_forward_list;
 
     join_condition_likes_comment.rais.push_back(move(rai_info_likes_comment));
     cond_likes_comment.push_back(move(join_condition_likes_comment));
 
-    join_condition_likes_comment_2.left = make_uniq<BoundReferenceExpression>("l_messageid_rowid", LogicalType::BIGINT, 1);
-    join_condition_likes_comment_2.right = make_uniq<BoundReferenceExpression>("comment_rowid", LogicalType::BIGINT, 4);
-    join_condition_likes_comment_2.comparison = ExpressionType::COMPARE_EQUAL;
-    cond_likes_comment.push_back(move(join_condition_likes_comment_2));
-
     LogicalComparisonJoin join_likes_comment_op(JoinType::INNER);
-    vector<LogicalType> output_likes_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
-                                                   LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    vector<LogicalType> output_likes_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                   LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
     join_likes_comment_op.types = output_likes_comment_types;
-    vector<idx_t> right_projection_map_likes_comment{1, 2, 3, 5};
+    vector<idx_t> right_projection_map_likes_comment{2, 3};
     vector<idx_t> merge_project_map_likes_comment;
     vector<LogicalType> delim_types_likes_comment;
-    auto join_likes_comment = make_uniq<PhysicalSIPJoin>(join_likes_comment_op, move(scan_likes_comment),
-                                                           move(join_knows), move(cond_likes_comment),
-                                                           JoinType::INNER, left_projection_map,
-                                                           right_projection_map_likes_comment,
-                                                           delim_types_likes_comment, 0);
+    auto join_likes_comment = make_uniq<PhysicalMergeSIPJoin>(join_likes_comment_op, move(scan_person2),
+                                                         move(join_hascreator), move(cond_likes_comment),
+                                                         JoinType::INNER, left_projection_map,
+                                                         right_projection_map_likes_comment, merge_project_map_likes_comment,
+                                                         delim_types_likes_comment, 0);
+
+    vector<idx_t> knows_ids{3, 4};
+    vector<LogicalType> get_knows_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_knows = "l";
+    vector<LogicalType> table_types_knows;
+    vector<unique_ptr<Expression>> filter_knows;
+    unique_ptr<LogicalGet> get_op_knows = move(
+            getLogicalGet(*this, table_knows, alias_knows, table_index_knows, table_types_knows));
+    unique_ptr<TableFilterSet> table_filters_knows = NULL;
+    unique_ptr<PhysicalTableScan> scan_knows = make_uniq<PhysicalTableScan>(get_knows_types,
+                                                                            get_op_knows->function,
+                                                                            get_op_knows->table_index,
+                                                                            move(get_op_knows->bind_data),
+                                                                            table_types_knows, knows_ids,
+                                                                            move(filter_knows), vector<column_t>(),
+                                                                            get_op_knows->names,
+                                                                            std::move(table_filters_knows),
+                                                                            get_op_knows->estimated_cardinality,
+                                                                            get_op_knows->extra_info);
+
+
+    vector<JoinCondition> cond_knows;
+    JoinCondition join_condition_knows, join_condition_knows_2;
+    join_condition_knows.left = make_uniq<BoundReferenceExpression>("k_person1id_rowid", LogicalType::BIGINT, 0);
+    join_condition_knows.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 5);
+    join_condition_knows.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_knows = make_uniq<RAIInfo>();
+    rai_info_knows->rai = table_knows.GetStorage().info->rais[0].get();
+    rai_info_knows->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_knows->forward = true;
+    rai_info_knows->vertex = &table_person;
+    rai_info_knows->vertex_id = table_index_person1;
+    rai_info_knows->passing_tables[0] = table_index_knows;
+    rai_info_knows->left_cardinalities[0] = table_knows.GetStorage().info->cardinality;
+    rai_info_knows->compact_list = &rai_info_knows->rai->alist->compact_forward_list;
+
+    join_condition_knows.rais.push_back(move(rai_info_knows));
+    cond_knows.push_back(move(join_condition_knows));
+
+    join_condition_knows_2.left = make_uniq<BoundReferenceExpression>("k_person2id_rowid", LogicalType::BIGINT, 1);
+    join_condition_knows_2.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_knows_2.comparison = ExpressionType::COMPARE_EQUAL;
+    cond_knows.push_back(move(join_condition_knows_2));
+
+    LogicalComparisonJoin join_knows_op(JoinType::INNER);
+    vector<LogicalType> output_knows_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                             LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_knows_op.types = output_knows_types;
+    vector<idx_t> right_projection_map_knows{1, 2, 3, 4};
+    vector<idx_t> merge_project_map_knows;
+    vector<LogicalType> delim_types_knows;
+    auto join_knows = make_uniq<PhysicalSIPJoin>(join_knows_op, move(scan_knows), move(join_likes_comment),
+                                                           move(cond_knows), JoinType::INNER, left_projection_map,
+                                                           right_projection_map_knows,
+                                                           delim_types_knows, 0);
 
 
     // project
@@ -5293,7 +5293,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC71PlanGLogueNoIntersect() 
     select_list.push_back(move(result_col3));
 
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
-    projection->children.push_back(move(join_likes_comment));
+    projection->children.push_back(move(join_knows));
 
     return projection;
 }
