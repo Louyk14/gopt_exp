@@ -201,23 +201,40 @@ public:
 public:
 // ic query
     unique_ptr<PhysicalOperator> GenerateIC11Plan();
+    unique_ptr<PhysicalOperator> GenerateIC11PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC12Plan();
     unique_ptr<PhysicalOperator> GenerateIC12PlanGLogue();
-    unique_ptr<PhysicalOperator> GenerateIC13Plan();
+    unique_ptr<PhysicalOperator> GenerateIC13PlanGLogue();
 
-    unique_ptr<PhysicalOperator> GenerateIC21Plan();
+    unique_ptr<PhysicalOperator> GenerateIC21PlanGLogue();
 
-    unique_ptr<PhysicalOperator> GenerateIC31Plan();
+    unique_ptr<PhysicalOperator> GenerateIC31PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC32PlanGLogue();
 
-    unique_ptr<PhysicalOperator> GenerateIC51Plan();
+    unique_ptr<PhysicalOperator> GenerateIC41PlanGLogue();
+
     unique_ptr<PhysicalOperator> GenerateIC51PlanGLogue();
-    unique_ptr<PhysicalOperator> GenerateIC52Plan();
+    unique_ptr<PhysicalOperator> GenerateIC51PlanAnother();
+    unique_ptr<PhysicalOperator> GenerateIC52PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
 
+    unique_ptr<PhysicalOperator> GenerateIC61PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC62PlanGLogue();
+
     unique_ptr<PhysicalOperator> GenerateIC71PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC71PlanGLogueNoIntersect();
+
+    unique_ptr<PhysicalOperator> GenerateIC81PlanGLogue();
+
+    unique_ptr<PhysicalOperator> GenerateIC91PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC92PlanGLogue();
+
+    unique_ptr<PhysicalOperator> GenerateIC111PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC112PlanGLogue();
+
+    unique_ptr<PhysicalOperator> GenerateIC121PlanGLogue();
 
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
