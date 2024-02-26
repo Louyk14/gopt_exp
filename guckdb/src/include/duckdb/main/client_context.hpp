@@ -214,8 +214,10 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC41PlanGLogue();
 
     unique_ptr<PhysicalOperator> GenerateIC51PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC51PlanGLogueEI();
     unique_ptr<PhysicalOperator> GenerateIC51PlanAnother();
     unique_ptr<PhysicalOperator> GenerateIC52PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC52PlanGLogueEI();
     unique_ptr<PhysicalOperator> GenerateIC52PlanSelf();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPass();
     unique_ptr<PhysicalOperator> GenerateIC52PlanByPassFromPerson();
@@ -239,6 +241,70 @@ public:
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB1aPlanMerge(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB2aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB3aPlanMerge(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB4aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB5aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB6aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB7aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB8aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB9aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB10aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB11aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB12aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB13aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB14aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB15aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB16aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB17aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB18aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB19aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB20aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB21aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB22aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB23aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB24aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB25aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB26aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB27aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB28aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB29aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB30aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB31aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB32aPlan(ClientContext& context);
+
+    unique_ptr<PhysicalOperator> GenerateJOB33aPlan(ClientContext& context);
 
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
