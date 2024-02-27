@@ -36,7 +36,9 @@ void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &ty
 void DataChunk::Initialize(Allocator &allocator, vector<LogicalType>::const_iterator begin,
                            vector<LogicalType>::const_iterator end, idx_t capacity_p) {
 	D_ASSERT(data.empty());                   // can only be initialized once
-	D_ASSERT(std::distance(begin, end) != 0); // empty chunk not allowed
+	if (std::distance(begin, end) == 0)
+        int to_stop = 0;
+    D_ASSERT(std::distance(begin, end) != 0); // empty chunk not allowed
 	capacity = capacity_p;
 	for (; begin != end; begin++) {
 		VectorCache cache(allocator, *begin, capacity);

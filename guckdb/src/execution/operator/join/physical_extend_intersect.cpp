@@ -49,12 +49,14 @@ namespace duckdb {
             merge_rais.emplace_back(conditions[i].rais[0].get());
         }
 
-        compact_lists = std::vector<CompactList*>(merge_rais.size() + 1, NULL);
-        for (int i = 0; i < merge_rais.size(); ++i) {
-            if (merge_rais[i]->forward)
-                compact_lists[i] = &merge_rais[i]->rai->alist->compact_forward_list;
-            else
-                compact_lists[i] = &merge_rais[i]->rai->alist->compact_backward_list;
+        if (merge_rais.size() >= 2) {
+            compact_lists = std::vector<CompactList *>(merge_rais.size() + 1, NULL);
+            for (int i = 0; i < merge_rais.size(); ++i) {
+                if (merge_rais[i]->forward)
+                    compact_lists[i] = &merge_rais[i]->rai->alist->compact_forward_list;
+                else
+                    compact_lists[i] = &merge_rais[i]->rai->alist->compact_backward_list;
+            }
         }
     }
 
@@ -207,7 +209,6 @@ namespace duckdb {
         auto &lstate = input.local_state.Cast<ExtendIntersectLocalSinkState>();
 
         // resolve the join keys for the right chunk
-
         idx_t build_side_size = 0;
         DataChunk im_chunk;
         auto im_types = chunk.GetTypes();
@@ -217,18 +218,28 @@ namespace duckdb {
         lstate.join_keys.Reset();
         lstate.build_executor.Execute(chunk, lstate.right_condition_chunk);
 
+        idx_t l_tuple = 0;
         idx_t right_tuple = 0;
         std::vector<idx_t> left_tuple(merge_rais.size() + 1, 0);
         if (chunk.size() != 0) {
             build_side_size += chunk.size();
             do {
-                merge_rais[0]->rai->GetVertexesMerge(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
-                                                     right_tuple, merge_rais, compact_lists);
+                if (merge_rais.size() >= 2) {
+                    merge_rais[0]->rai->GetVertexesMerge(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
+                                                         right_tuple, merge_rais, compact_lists);
+                }
+                else {
+                    merge_rais[0]->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, l_tuple,
+                                                    right_tuple, merge_rais[0]->forward);
+                }
                 //rai_info->rai->GetVertexes(chunk, lstate.right_condition_chunk, im_chunk, left_tuple,
                 //                            right_tuple, rai_info->forward);
+
                 AppendHTBlocks(lstate, im_chunk, lstate.build_chunk);
             } while (right_tuple < chunk.size());
         }
+
+
 
         return SinkResultType::NEED_MORE_INPUT;
     }
@@ -300,9 +311,10 @@ namespace duckdb {
         for (int i = 0; i < conditions.size(); ++i) {
             lstate.join_keys.data[i].Reference(chunk.data[chunk.ColumnCount() - 1]);
         }
+
         //	state->rhs_executor.Execute(chunk, state->join_keys);
         if (right_projection_map.size() > 0) {
-            build_chunk.Reset();
+            // build_chunk.Reset();
             build_chunk.SetCardinality(chunk);
             for (idx_t i = 0; i < right_projection_map.size(); i++) {
                 build_chunk.data[i].Reference(chunk.data[right_projection_map[i]]);
@@ -317,7 +329,6 @@ namespace duckdb {
             }
             lstate.hash_table->Build(lstate.append_state, lstate.join_keys, build_chunk);
         }
-
     }
 
 //===--------------------------------------------------------------------===//
@@ -354,15 +365,23 @@ namespace duckdb {
         TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
             sink.hash_table->Finalize(chunk_idx_from, chunk_idx_to, parallel);
 
-            idx_t non_empty_hash_slots = 0;
+            /*idx_t non_empty_hash_slots = 0;
             auto pointers = reinterpret_cast<data_ptr_t *>(sink.hash_table->hash_map.get());
             for (idx_t i = 0; i < sink.hash_table->bitmask; ++i) {
                 non_empty_hash_slots += (pointers[i] != nullptr);
-            }
+            }*/
+
+           /* auto &rai_info = sink.op.conditions[0].rais[0];
+            double filter_passing_ratio = (double)non_empty_hash_slots / (double)rai_info->left_cardinalities[0];
+            if (filter_passing_ratio <= 0.8) {
+                sink.hash_table->GenerateBitmaskFilter(*rai_info, false);
+                PassZoneFilter();
+            }*/
 
             idx_t last_rai_info_part = -1;
             idx_t last_rai_info_index = -1;
 
+            idx_t key_index = 0;
             for (int i = 0; i < sink.op.conditions.size(); ++i) {
                 if (!sink.op.conditions[i].rais.empty()) {
                     if (last_rai_info_index == -1) {
@@ -378,12 +397,14 @@ namespace duckdb {
                         sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
                                                                           rai_info->rai->rai_direction ==
                                                                           RAIDirection::PKFK &&
-                                                                          rai_info->compact_list != nullptr);
+                                                                          rai_info->compact_list != nullptr, key_index);
                     }
 
                     last_rai_info_part = 0;
                     last_rai_info_index = i;
                 }
+
+                ++key_index;
             }
 
             for (int i = 0; i < sink.op.other_conditions.size(); ++i) {
@@ -394,7 +415,7 @@ namespace duckdb {
                         sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
                                                                           rai_info->rai->rai_direction ==
                                                                           RAIDirection::PKFK &&
-                                                                          rai_info->compact_list != nullptr);
+                                                                          rai_info->compact_list != nullptr, key_index);
                     }
                     else {
                         auto &rai_info = sink.op.other_conditions[i].rais[0];
@@ -402,12 +423,14 @@ namespace duckdb {
                         sink.hash_table->GenerateBitmaskFilterIncremental(*rai_info, *rai_info_pre,
                                                                           rai_info->rai->rai_direction ==
                                                                           RAIDirection::PKFK &&
-                                                                          rai_info->compact_list != nullptr);
+                                                                          rai_info->compact_list != nullptr, key_index);
                     }
 
                     last_rai_info_part = 1;
                     last_rai_info_index = i;
                 }
+
+                ++key_index;
             }
 
             if (last_rai_info_index != -1) {
@@ -422,8 +445,8 @@ namespace duckdb {
             }
 
             PassZoneFilter();
-
             event->FinishTask();
+
             return TaskExecutionResult::TASK_FINISHED;
         }
 
@@ -726,6 +749,7 @@ namespace duckdb {
             state.scan_structure = sink.hash_table->Probe(state.join_keys);
         }
         state.scan_structure->Next(state.join_keys, input, chunk);
+
         return OperatorResultType::HAVE_MORE_OUTPUT;
     }
 

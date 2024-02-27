@@ -134,7 +134,7 @@ namespace duckdb {
         //! Probe the HT with the given input chunk, resulting in the given result
         unique_ptr<SIPScanStructure> Probe(DataChunk &keys, Vector *precomputed_hashes = nullptr);
         void GenerateBitmaskFilter(RAIInfo &rai_info, bool use_alist);
-        void GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist);
+        void GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist, idx_t key_index);
         //! Scan the HT to construct the full outer join result
         void ScanFullOuter(SIPHTScanState &state, Vector &addresses, DataChunk &result);
 

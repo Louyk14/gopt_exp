@@ -301,8 +301,7 @@ namespace duckdb {
             source_chunk.data[i].Reference(keys.data[i]);
         }
         idx_t col_offset = keys.ColumnCount();
-        if (build_types.size() != payload.ColumnCount())
-            int to_stop = 0;
+
         D_ASSERT(build_types.size() == payload.ColumnCount());
         for (idx_t i = 0; i < payload.ColumnCount(); i++) {
             source_chunk.data[col_offset + i].Reference(payload.data[i]);
@@ -468,7 +467,7 @@ namespace duckdb {
         }
     }
 
-    void SIPHashTable::GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist) {
+    void SIPHashTable::GenerateBitmaskFilterIncremental(RAIInfo &rai_info, RAIInfo &rai_info_pre, bool use_alist, idx_t key_index) {
         // initialize bitmask filters
         auto zone_size = (rai_info.left_cardinalities[0] / STANDARD_VECTOR_SIZE) + 1;
         rai_info.row_bitmask = make_uniq<bitmask_vector>(zone_size * STANDARD_VECTOR_SIZE);
@@ -491,7 +490,7 @@ namespace duckdb {
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[key_index]));
                 }
                 FillBitmaskWithAListIncremental(keys, count, rai_info, rai_info_pre.row_bitmask);
             } while (iterator.Next());
@@ -505,7 +504,7 @@ namespace duckdb {
             do {
                 const auto count = iterator.GetCurrentChunkCount();
                 for (idx_t i = 0; i < count; ++i) {
-                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[0]));
+                    key_data[i] = Load<int64_t>((data_ptr_t)(row_locations[i] + layout.GetOffsets()[key_index]));
                 }
                 FillBitmaskWithoutAListIncremental(keys, count, rai_info, rai_info_pre.row_bitmask);
             } while (iterator.Next());
@@ -637,9 +636,6 @@ namespace duckdb {
                 row_bitmask[keys_pos] = true;
                 auto zone_id = keys_pos / STANDARD_VECTOR_SIZE;
                 zone_bitmask[zone_id] = true;
-            }
-            else {
-                std::cout << "remove a value" << std::endl;
             }
         }
     }
