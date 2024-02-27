@@ -476,7 +476,7 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
             physical_plan = move(physical_plan_by_hand);
         }
         else if (pb_file == "job8a") {
-            auto physical_plan_by_hand = GenerateJOB8aPlan(*this);
+            auto physical_plan_by_hand = GenerateJOB8aPlanNewDirect(*this);
             physical_plan = move(physical_plan_by_hand);
         }
         else if (pb_file == "job9a") {
@@ -12481,6 +12481,548 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlan(duckdb::ClientCont
                                                                   left_projection_map,
                                                                   right_projection_map_aka_name_to_name_,
                                                                   delim_types_aka_name_to_name_, 0);
+
+
+    vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 2);
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(join_aka_name_to_name_));
+
+    // aggregate
+    string agg_name = "min";
+    string agg_error = "";
+    QueryErrorContext error_context(NULL, NULL);
+    auto min_func = Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, "", "",
+                                      "min", OnEntryNotFound::RETURN_NULL, error_context);
+    auto &min_func_set = min_func->Cast<AggregateFunctionCatalogEntry>();
+    // bind the aggregate
+    FunctionBinder function_binder(context);
+    vector<LogicalType> types;
+    types.push_back(LogicalType::VARCHAR);
+    idx_t best_function_varchar = function_binder.BindFunction(agg_name, min_func_set.functions, types, agg_error);
+    auto bound_function_min_varchar = min_func_set.functions.GetFunctionByOffset(best_function_varchar);
+
+    auto first_children = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 0);
+    vector<unique_ptr<Expression>> childrenlist1;
+    childrenlist1.push_back(move(first_children));
+    auto aggregate1 =
+            function_binder.BindAggregateFunction(bound_function_min_varchar, std::move(childrenlist1), nullptr,
+                                                  AggregateType::NON_DISTINCT);
+
+    auto second_children = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 1);
+    vector<unique_ptr<Expression>> childrenlist2;
+    childrenlist2.push_back(move(second_children));
+    auto aggregate2 =
+            function_binder.BindAggregateFunction(bound_function_min_varchar, std::move(childrenlist2), nullptr,
+                                                  AggregateType::NON_DISTINCT);
+
+    vector<unique_ptr<Expression>> aggregates;
+    aggregates.push_back(move(aggregate1));
+    aggregates.push_back(move(aggregate2));
+
+    vector<LogicalType> aggregate_types{LogicalType::VARCHAR, LogicalType::VARCHAR};
+    auto ungrouped_aggregate = make_uniq<PhysicalUngroupedAggregate>(aggregate_types, move(aggregates), 0);
+    ungrouped_aggregate->children.push_back(move(projection));
+
+    return ungrouped_aggregate;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanNewDirect(duckdb::ClientContext &context) {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_aka_name_an1 = "aka_name";
+    string table_vertex_name_n1 = "name";
+    string table_vertex_title_t = "title";
+    string table_vertex_company_name_cn = "company_name";
+    string table_vertex_role_type_rt = "role_type";
+    string table_vertex_cast_info_ = "cast_info";
+    string table_vertex_movie_companies_ = "movie_companies";
+
+    idx_t table_index_aka_name_an1 = 1;
+    idx_t table_index_name_n1 = 2;
+    idx_t table_index_title_t = 3;
+    idx_t table_index_company_name_cn = 4;
+    idx_t table_index_role_type_rt = 5;
+    idx_t table_index_cast_info_ = 9;
+    idx_t table_index_movie_companies_ = 8;
+    auto table_or_view_aka_name = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_aka_name_an1,
+                                                    OnEntryNotFound::RETURN_NULL);
+    auto &table_aka_name = table_or_view_aka_name->Cast<TableCatalogEntry>();
+    auto table_or_view_name = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_name_n1,
+                                                OnEntryNotFound::RETURN_NULL);
+    auto &table_name = table_or_view_name->Cast<TableCatalogEntry>();
+    auto table_or_view_title = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_title_t,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_title = table_or_view_title->Cast<TableCatalogEntry>();
+    auto table_or_view_company_name = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                        table_vertex_company_name_cn, OnEntryNotFound::RETURN_NULL);
+    auto &table_company_name = table_or_view_company_name->Cast<TableCatalogEntry>();
+    auto table_or_view_role_type = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_role_type_rt,
+                                                     OnEntryNotFound::RETURN_NULL);
+    auto &table_role_type = table_or_view_role_type->Cast<TableCatalogEntry>();
+    auto table_or_view_cast_info = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_cast_info_,
+                                                     OnEntryNotFound::RETURN_NULL);
+    auto &table_cast_info = table_or_view_cast_info->Cast<TableCatalogEntry>();
+    auto table_or_view_movie_companies = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                           table_vertex_movie_companies_, OnEntryNotFound::RETURN_NULL);
+    auto &table_movie_companies = table_or_view_movie_companies->Cast<TableCatalogEntry>();
+
+    string p_role_p = "actress";
+    Value p_role = Value(p_role_p);
+    vector<idx_t> role_type_rt_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_role_type_rt_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_role_type_rt = "rt";
+    vector<LogicalType> table_types_role_type_rt;
+    vector<unique_ptr<Expression>> filter_role_type_rt;
+    unique_ptr<LogicalGet> get_op_role_type_rt = move(
+            getLogicalGet(*this, table_role_type, alias_role_type_rt, table_index_role_type_rt,
+                          table_types_role_type_rt));
+    unique_ptr<TableFilterSet> table_filters_role_type_rt = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_rt = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                      p_role);
+    table_filters_role_type_rt->filters[1] = move(constant_filter_rt);
+    unique_ptr<PhysicalTableScan> scan_role_type_rt = make_uniq<PhysicalTableScan>(get_role_type_rt_types,
+                                                                                   get_op_role_type_rt->function,
+                                                                                   get_op_role_type_rt->table_index,
+                                                                                   move(get_op_role_type_rt->bind_data),
+                                                                                   table_types_role_type_rt,
+                                                                                   role_type_rt_ids,
+                                                                                   move(filter_role_type_rt),
+                                                                                   vector<column_t>(),
+                                                                                   get_op_role_type_rt->names,
+                                                                                   std::move(
+                                                                                           table_filters_role_type_rt),
+                                                                                   get_op_role_type_rt->estimated_cardinality,
+                                                                                   get_op_role_type_rt->extra_info);
+
+
+    string p_cast_note = "(voice: English version)";
+    Value p_note = Value(p_cast_note);
+    vector<idx_t> cast_info_ids{4, 7, 8, 9};
+    vector<LogicalType> get_cast_info_types{LogicalType::VARCHAR, LogicalType::BIGINT,
+                                            LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_cast_info = "ci";
+    vector<LogicalType> table_types_cast_info;
+    vector<unique_ptr<Expression>> filter_cast_info;
+    unique_ptr<LogicalGet> get_op_cast_info = move(
+            getLogicalGet(*this, table_cast_info, alias_cast_info, table_index_cast_info_, table_types_cast_info));
+    unique_ptr<TableFilterSet> table_filters_cast_info = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_ci = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                      p_note);
+    table_filters_cast_info->filters[0] = move(constant_filter_ci);
+    unique_ptr<PhysicalTableScan> scan_cast_info = make_uniq<PhysicalTableScan>(get_cast_info_types,
+                                                                                get_op_cast_info->function,
+                                                                                get_op_cast_info->table_index,
+                                                                                move(get_op_cast_info->bind_data),
+                                                                                table_types_cast_info, cast_info_ids,
+                                                                                move(filter_cast_info),
+                                                                                vector<column_t>(),
+                                                                                get_op_cast_info->names,
+                                                                                std::move(table_filters_cast_info),
+                                                                                get_op_cast_info->estimated_cardinality,
+                                                                                get_op_cast_info->extra_info);
+
+
+    vector<JoinCondition> cond_cast_info_;
+    JoinCondition join_condition_cast_info_;
+    join_condition_cast_info_.left = make_uniq<BoundReferenceExpression>("role_id_rowid", LogicalType::BIGINT, 3);
+    join_condition_cast_info_.right = make_uniq<BoundReferenceExpression>("role_type_rowid", LogicalType::BIGINT, 0);
+    join_condition_cast_info_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_cast_info_ = make_uniq<RAIInfo>();
+    rai_info_cast_info_->rai = table_cast_info.GetStorage().info->rais[2].get();
+    rai_info_cast_info_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_cast_info_->forward = true;
+    rai_info_cast_info_->vertex = &table_role_type;
+    rai_info_cast_info_->vertex_id = table_index_role_type_rt;
+    rai_info_cast_info_->passing_tables[0] = table_index_cast_info_;
+    rai_info_cast_info_->left_cardinalities[0] = table_cast_info.GetStorage().info->cardinality;
+    rai_info_cast_info_->compact_list = &rai_info_cast_info_->rai->alist->compact_forward_list;
+
+    join_condition_cast_info_.rais.push_back(move(rai_info_cast_info_));
+    cond_cast_info_.push_back(move(join_condition_cast_info_));
+
+    LogicalComparisonJoin join_cast_info__op(JoinType::INNER);
+    vector<LogicalType> output_cast_info__types{LogicalType::VARCHAR, LogicalType::BIGINT,
+                                                LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT};
+    join_cast_info__op.types = output_cast_info__types;
+    vector<idx_t> right_projection_map_cast_info_{0};
+    vector<idx_t> merge_project_map_cast_info_;
+    vector<LogicalType> delim_types_cast_info_;
+    auto join_cast_info_ = make_uniq<PhysicalSIPJoin>(join_cast_info__op, move(scan_cast_info), move(scan_role_type_rt),
+                                                      move(cond_cast_info_),
+                                                      JoinType::INNER, left_projection_map,
+                                                      right_projection_map_cast_info_,
+                                                      delim_types_cast_info_, 0);
+
+
+    vector<idx_t> title_t_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_title_t_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_title_t = "t";
+    vector<LogicalType> table_types_title_t;
+    vector<unique_ptr<Expression>> filter_title_t;
+    unique_ptr<LogicalGet> get_op_title_t = move(
+            getLogicalGet(*this, table_title, alias_title_t, table_index_title_t, table_types_title_t));
+    unique_ptr<TableFilterSet> table_filters_title_t = NULL;
+    unique_ptr<PhysicalTableScan> scan_title_t = make_uniq<PhysicalTableScan>(get_title_t_types,
+                                                                              get_op_title_t->function,
+                                                                              get_op_title_t->table_index,
+                                                                              move(get_op_title_t->bind_data),
+                                                                              table_types_title_t, title_t_ids,
+                                                                              move(filter_title_t), vector<column_t>(),
+                                                                              get_op_title_t->names,
+                                                                              std::move(table_filters_title_t),
+                                                                              get_op_title_t->estimated_cardinality,
+                                                                              get_op_title_t->extra_info);
+
+    vector<JoinCondition> cond_title_t;
+    JoinCondition join_condition_title_t;
+    join_condition_title_t.left = make_uniq<BoundReferenceExpression>("title_rowid", LogicalType::BIGINT, 0);
+    join_condition_title_t.right = make_uniq<BoundReferenceExpression>("movie_id_rowid", LogicalType::BIGINT, 1);
+    join_condition_title_t.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_title_t = make_uniq<RAIInfo>();
+    rai_info_title_t->rai = table_cast_info.GetStorage().info->rais[2].get();
+    rai_info_title_t->rai_type = RAIType::TARGET_EDGE;
+    rai_info_title_t->forward = true;
+    rai_info_title_t->vertex = &table_title;
+    rai_info_title_t->vertex_id = table_index_title_t;
+    rai_info_title_t->passing_tables[0] = table_index_title_t;
+    rai_info_title_t->left_cardinalities[0] = table_title.GetStorage().info->cardinality;
+    // rai_info_title_t->compact_list = &rai_info_title_t->rai->alist->compact__list;
+
+    join_condition_title_t.rais.push_back(move(rai_info_title_t));
+    cond_title_t.push_back(move(join_condition_title_t));
+
+    LogicalComparisonJoin join_title_t_op(JoinType::INNER);
+    vector<LogicalType> output_title_t_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_title_t_op.types = output_title_t_types;
+    vector<idx_t> right_projection_map_title_t{2};
+    vector<idx_t> merge_project_map_title_t;
+    vector<LogicalType> delim_types_title_t;
+    auto join_title_t = make_uniq<PhysicalSIPJoin>(join_title_t_op, move(scan_title_t), move(join_cast_info_),
+                                                   move(cond_title_t),
+                                                   JoinType::INNER, left_projection_map,
+                                                   right_projection_map_title_t,
+                                                   delim_types_title_t, 0);
+
+    vector<idx_t> movie_companies_ids{4, 5, 6};
+    vector<LogicalType> get_movie_companies_types{LogicalType::VARCHAR, LogicalType::BIGINT,
+                                                  LogicalType::BIGINT};
+    string alias_movie_companies = "mc";
+    vector<LogicalType> table_types_movie_companies;
+    vector<unique_ptr<Expression>> filter_movie_companies;
+    unique_ptr<LogicalGet> get_op_movie_companies = move(
+            getLogicalGet(*this, table_movie_companies, alias_movie_companies, table_index_movie_companies_,
+                          table_types_movie_companies));
+    unique_ptr<TableFilterSet> table_filters_movie_companies = NULL;
+    unique_ptr<PhysicalTableScan> scan_movie_companies = make_uniq<PhysicalTableScan>(get_movie_companies_types,
+                                                                                      get_op_movie_companies->function,
+                                                                                      get_op_movie_companies->table_index,
+                                                                                      move(get_op_movie_companies->bind_data),
+                                                                                      table_types_movie_companies,
+                                                                                      movie_companies_ids,
+                                                                                      move(filter_movie_companies),
+                                                                                      vector<column_t>(),
+                                                                                      get_op_movie_companies->names,
+                                                                                      std::move(
+                                                                                              table_filters_movie_companies),
+                                                                                      get_op_movie_companies->estimated_cardinality,
+                                                                                      get_op_movie_companies->extra_info);
+
+
+    vector<LogicalType> filter_mc_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list_mc;
+    auto mc_unlike_expression_left = make_uniq<BoundReferenceExpression>("note", LogicalType::VARCHAR, 0);
+    auto mc_unlike_expression_value = make_uniq<BoundConstantExpression>(Value("(USA)"));
+    vector<unique_ptr<Expression>> mc_unlike_arguments;
+    mc_unlike_arguments.push_back(move(mc_unlike_expression_left));
+    mc_unlike_arguments.push_back(move(mc_unlike_expression_value));
+
+    QueryErrorContext error_context_unlike(NULL, NULL);
+    ScalarFunction mc_bound_function_contains = ContainsFun::GetFunction();
+    unique_ptr<FunctionData> mc_bind_data_contains = NULL;
+
+    auto mc_unlike_bound_function = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN,
+                                                                       mc_bound_function_contains,
+                                                                       move(mc_unlike_arguments),
+                                                                       move(mc_bind_data_contains), false);
+
+    auto mc_not_unlike_bound_function = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT,
+                                                                           LogicalType::BOOLEAN);
+    mc_not_unlike_bound_function->children.push_back(move(mc_unlike_bound_function));
+
+    auto mc_like_expression_left_exp = make_uniq<BoundReferenceExpression>("note", LogicalType::VARCHAR, 0);
+    auto mc_like_expression_left_value = make_uniq<BoundConstantExpression>(Value("(Japan)"));
+    vector<unique_ptr<Expression>> mc_like_arguments_left;
+    mc_like_arguments_left.push_back(move(mc_like_expression_left_exp));
+    mc_like_arguments_left.push_back(move(mc_like_expression_left_value));
+    auto mc_like_bound_function_left = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN,
+                                                                          mc_bound_function_contains,
+                                                                          move(mc_like_arguments_left),
+                                                                          move(mc_bind_data_contains), false);
+
+    auto mc_and_conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
+    mc_and_conjunction->children.push_back(move(mc_not_unlike_bound_function));
+    mc_and_conjunction->children.push_back(move(mc_like_bound_function_left));
+
+    select_list_mc.push_back(move(mc_and_conjunction));
+    unique_ptr<PhysicalFilter> filter_mc_contains = make_uniq<PhysicalFilter>(filter_mc_types, move(select_list_mc), 0);
+    filter_mc_contains->children.push_back(move(scan_movie_companies));
+
+    vector<JoinCondition> cond_role_type_rt;
+    JoinCondition join_condition_role_type_rt;
+    join_condition_role_type_rt.left = make_uniq<BoundReferenceExpression>("movie_id_rowid", LogicalType::BIGINT, 2);
+    join_condition_role_type_rt.right = make_uniq<BoundReferenceExpression>("title_rowid", LogicalType::BIGINT, 0);
+    join_condition_role_type_rt.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_role_type_rt = make_uniq<RAIInfo>();
+    rai_info_role_type_rt->rai = table_movie_companies.GetStorage().info->rais[0].get();
+    rai_info_role_type_rt->rai_type = RAIType::EDGE_TARGET;
+    rai_info_role_type_rt->forward = false;
+    rai_info_role_type_rt->vertex = &table_title;
+    rai_info_role_type_rt->vertex_id = table_index_title_t;
+    rai_info_role_type_rt->passing_tables[0] = table_index_movie_companies_;
+    rai_info_role_type_rt->left_cardinalities[0] = table_movie_companies.GetStorage().info->cardinality;
+    rai_info_role_type_rt->compact_list = &rai_info_role_type_rt->rai->alist->compact_backward_list;
+
+    join_condition_role_type_rt.rais.push_back(move(rai_info_role_type_rt));
+    cond_role_type_rt.push_back(move(join_condition_role_type_rt));
+
+    LogicalComparisonJoin join_role_type_rt_op(JoinType::INNER);
+    vector<LogicalType> output_role_type_rt_types{LogicalType::VARCHAR, LogicalType::BIGINT,
+                                                  LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                  LogicalType::BIGINT};
+    join_role_type_rt_op.types = output_role_type_rt_types;
+    vector<idx_t> right_projection_map_role_type_rt{1, 2};
+    vector<idx_t> merge_project_map_role_type_rt;
+    vector<LogicalType> delim_types_role_type_rt;
+    auto join_role_type_rt = make_uniq<PhysicalSIPJoin>(join_role_type_rt_op, move(filter_mc_contains),
+                                                        move(join_title_t), move(cond_role_type_rt),
+                                                        JoinType::INNER, left_projection_map,
+                                                        right_projection_map_role_type_rt, delim_types_role_type_rt, 0);
+
+
+    string p_country_code_n = "[jp]";
+    Value p_country_code = Value(p_country_code_n);
+    vector<idx_t> company_name_cn_ids{COLUMN_IDENTIFIER_ROW_ID, 2};
+    vector<LogicalType> get_company_name_cn_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_company_name_cn = "cn";
+    vector<LogicalType> table_types_company_name_cn;
+    vector<unique_ptr<Expression>> filter_company_name_cn;
+    unique_ptr<LogicalGet> get_op_company_name_cn = move(
+            getLogicalGet(*this, table_company_name, alias_company_name_cn, table_index_company_name_cn,
+                          table_types_company_name_cn));
+    unique_ptr<TableFilterSet> table_filters_company_name_cn = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_cn = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                      p_country_code);
+    table_filters_company_name_cn->filters[1] = move(constant_filter_cn);
+    unique_ptr<PhysicalTableScan> scan_company_name_cn = make_uniq<PhysicalTableScan>(get_company_name_cn_types,
+                                                                                      get_op_company_name_cn->function,
+                                                                                      get_op_company_name_cn->table_index,
+                                                                                      move(get_op_company_name_cn->bind_data),
+                                                                                      table_types_company_name_cn,
+                                                                                      company_name_cn_ids,
+                                                                                      move(filter_company_name_cn),
+                                                                                      vector<column_t>(),
+                                                                                      get_op_company_name_cn->names,
+                                                                                      std::move(
+                                                                                              table_filters_company_name_cn),
+                                                                                      get_op_company_name_cn->estimated_cardinality,
+                                                                                      get_op_company_name_cn->extra_info);
+
+
+
+    vector<JoinCondition> cond_movie_companies_;
+    JoinCondition join_condition_movie_companies_;
+    join_condition_movie_companies_.left = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
+                                                                               0);
+    join_condition_movie_companies_.right = make_uniq<BoundReferenceExpression>("company_id_rowid",
+                                                                                LogicalType::BIGINT, 1);
+    join_condition_movie_companies_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_movie_companies_ = make_uniq<RAIInfo>();
+    rai_info_movie_companies_->rai = table_movie_companies.GetStorage().info->rais[0].get();
+    rai_info_movie_companies_->rai_type = RAIType::SOURCE_EDGE;
+    rai_info_movie_companies_->forward = false;
+    rai_info_movie_companies_->vertex = &table_company_name;
+    rai_info_movie_companies_->vertex_id = table_index_company_name_cn;
+    rai_info_movie_companies_->passing_tables[0] = table_index_company_name_cn;
+    rai_info_movie_companies_->left_cardinalities[0] = table_company_name.GetStorage().info->cardinality;
+    // rai_info_movie_companies_->compact_list = &rai_info_movie_companies_->rai->alist->compact_forward_list;
+
+    join_condition_movie_companies_.rais.push_back(move(rai_info_movie_companies_));
+    cond_movie_companies_.push_back(move(join_condition_movie_companies_));
+
+    LogicalComparisonJoin join_movie_companies__op(JoinType::INNER);
+    vector<LogicalType> output_movie_companies__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                                      LogicalType::BIGINT};
+    join_movie_companies__op.types = output_movie_companies__types;
+    vector<idx_t> right_projection_map_movie_companies_{3, 4};
+    vector<idx_t> merge_project_map_movie_companies_;
+    vector<LogicalType> delim_types_movie_companies_;
+    auto join_movie_companies_ = make_uniq<PhysicalSIPJoin>(join_movie_companies__op, move(scan_company_name_cn),
+                                                            move(join_role_type_rt),
+                                                            move(cond_movie_companies_), JoinType::INNER,
+                                                            left_projection_map,
+                                                            right_projection_map_movie_companies_,
+                                                            delim_types_movie_companies_, 0);
+
+
+
+
+
+
+    vector<idx_t> name_n1_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_name_n1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_name_n1 = "n1";
+    vector<LogicalType> table_types_name_n1;
+    vector<unique_ptr<Expression>> filter_name_n1;
+    unique_ptr<LogicalGet> get_op_name_n1 = move(
+            getLogicalGet(*this, table_name, alias_name_n1, table_index_name_n1, table_types_name_n1));
+    unique_ptr<TableFilterSet> table_filters_name_n1 = NULL;
+    unique_ptr<PhysicalTableScan> scan_name_n1 = make_uniq<PhysicalTableScan>(get_name_n1_types,
+                                                                              get_op_name_n1->function,
+                                                                              get_op_name_n1->table_index,
+                                                                              move(get_op_name_n1->bind_data),
+                                                                              table_types_name_n1, name_n1_ids,
+                                                                              move(filter_name_n1), vector<column_t>(),
+                                                                              get_op_name_n1->names,
+                                                                              std::move(table_filters_name_n1),
+                                                                              get_op_name_n1->estimated_cardinality,
+                                                                              get_op_name_n1->extra_info);
+
+    vector<LogicalType> filter_name_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_name;
+    auto name_unlike_expression_left = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto name_unlike_expression_value = make_uniq<BoundConstantExpression>(Value("Yu"));
+    vector<unique_ptr<Expression>> name_unlike_arguments;
+    name_unlike_arguments.push_back(move(name_unlike_expression_left));
+    name_unlike_arguments.push_back(move(name_unlike_expression_value));
+
+    ScalarFunction name_bound_function_contains = ContainsFun::GetFunction();
+    unique_ptr<FunctionData> name_bind_data_contains = NULL;
+
+    auto name_unlike_bound_function = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN,
+                                                                         name_bound_function_contains,
+                                                                         move(name_unlike_arguments),
+                                                                         move(name_bind_data_contains), false);
+
+    auto name_not_unlike_bound_function = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT,
+                                                                             LogicalType::BOOLEAN);
+    name_not_unlike_bound_function->children.push_back(move(name_unlike_bound_function));
+
+    auto name_like_expression_left_exp = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto name_like_expression_left_value = make_uniq<BoundConstantExpression>(Value("Yo"));
+    vector<unique_ptr<Expression>> name_like_arguments_left;
+    name_like_arguments_left.push_back(move(name_like_expression_left_exp));
+    name_like_arguments_left.push_back(move(name_like_expression_left_value));
+    auto name_like_bound_function_left = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN,
+                                                                            name_bound_function_contains,
+                                                                            move(name_like_arguments_left),
+                                                                            move(name_bind_data_contains), false);
+
+    auto name_and_conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
+    name_and_conjunction->children.push_back(move(name_not_unlike_bound_function));
+    name_and_conjunction->children.push_back(move(name_like_bound_function_left));
+
+    select_list_name.push_back(move(name_and_conjunction));
+    unique_ptr<PhysicalFilter> filter_name_contains = make_uniq<PhysicalFilter>(filter_name_types,
+                                                                                move(select_list_name), 0);
+    filter_name_contains->children.push_back(move(scan_name_n1));
+
+
+    vector<JoinCondition> cond_name_n1;
+    JoinCondition join_condition_name_n1;
+    join_condition_name_n1.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
+    join_condition_name_n1.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 3);
+    join_condition_name_n1.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_name_n1 = make_uniq<RAIInfo>();
+    rai_info_name_n1->rai = table_cast_info.GetStorage().info->rais[0].get();
+    rai_info_name_n1->rai_type = RAIType::TARGET_EDGE;
+    rai_info_name_n1->forward = true;
+    rai_info_name_n1->vertex = &table_name;
+    rai_info_name_n1->vertex_id = table_index_name_n1;
+    rai_info_name_n1->passing_tables[0] = table_index_name_n1;
+    rai_info_name_n1->left_cardinalities[0] = table_name.GetStorage().info->cardinality;
+    // rai_info_name_n1->compact_list = &rai_info_name_n1->rai->alist->compact__list;
+
+    join_condition_name_n1.rais.push_back(move(rai_info_name_n1));
+    cond_name_n1.push_back(move(join_condition_name_n1));
+
+    LogicalComparisonJoin join_name_n1_op(JoinType::INNER);
+    vector<LogicalType> output_name_n1_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_name_n1_op.types = output_name_n1_types;
+    vector<idx_t> right_projection_map_name_n1{2};
+    vector<idx_t> merge_project_map_name_n1;
+    vector<LogicalType> delim_types_name_n1;
+    auto join_name_n1 = make_uniq<PhysicalSIPJoin>(join_name_n1_op, move(filter_name_contains), move(join_movie_companies_),
+                                                   move(cond_name_n1), JoinType::INNER,
+                                                   left_projection_map, right_projection_map_name_n1,
+                                                   delim_types_name_n1, 0);
+
+
+    vector<idx_t> aka_name_an1_ids{8, 2};
+    vector<LogicalType> get_aka_name_an1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_aka_name_an1 = "an1";
+    vector<LogicalType> table_types_aka_name_an1;
+    vector<unique_ptr<Expression>> filter_aka_name_an1;
+    unique_ptr<LogicalGet> get_op_aka_name_an1 = move(
+            getLogicalGet(*this, table_aka_name, alias_aka_name_an1, table_index_aka_name_an1,
+                          table_types_aka_name_an1));
+    unique_ptr<TableFilterSet> table_filters_aka_name_an1 = NULL;
+    unique_ptr<PhysicalTableScan> scan_aka_name_an1 = make_uniq<PhysicalTableScan>(get_aka_name_an1_types,
+                                                                                   get_op_aka_name_an1->function,
+                                                                                   get_op_aka_name_an1->table_index,
+                                                                                   move(get_op_aka_name_an1->bind_data),
+                                                                                   table_types_aka_name_an1,
+                                                                                   aka_name_an1_ids,
+                                                                                   move(filter_aka_name_an1),
+                                                                                   vector<column_t>(),
+                                                                                   get_op_aka_name_an1->names,
+                                                                                   std::move(
+                                                                                           table_filters_aka_name_an1),
+                                                                                   get_op_aka_name_an1->estimated_cardinality,
+                                                                                   get_op_aka_name_an1->extra_info);
+
+
+    vector<JoinCondition> cond_aka_name_to_name_;
+    JoinCondition join_condition_aka_name_to_name_;
+    join_condition_aka_name_to_name_.left = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT,
+                                                                                0);
+    join_condition_aka_name_to_name_.right = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
+    join_condition_aka_name_to_name_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_aka_name_to_name_ = make_uniq<RAIInfo>();
+    rai_info_aka_name_to_name_->rai = table_aka_name.GetStorage().info->rais[0].get();
+    rai_info_aka_name_to_name_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_aka_name_to_name_->forward = true;
+    rai_info_aka_name_to_name_->vertex = &table_name;
+    rai_info_aka_name_to_name_->vertex_id = table_index_name_n1;
+    rai_info_aka_name_to_name_->passing_tables[0] = table_index_aka_name_an1;
+    rai_info_aka_name_to_name_->left_cardinalities[0] = table_aka_name.GetStorage().info->cardinality;
+    rai_info_aka_name_to_name_->compact_list = &rai_info_aka_name_to_name_->rai->alist->compact_forward_list;
+
+    join_condition_aka_name_to_name_.rais.push_back(move(rai_info_aka_name_to_name_));
+    cond_aka_name_to_name_.push_back(move(join_condition_aka_name_to_name_));
+
+    LogicalComparisonJoin join_aka_name_to_name__op(JoinType::INNER);
+    vector<LogicalType> output_aka_name_to_name__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_aka_name_to_name__op.types = output_aka_name_to_name__types;
+    vector<idx_t> right_projection_map_aka_name_to_name_{2};
+    vector<idx_t> merge_project_map_aka_name_to_name_;
+    vector<LogicalType> delim_types_aka_name_to_name_;
+    auto join_aka_name_to_name_ = make_uniq<PhysicalSIPJoin>(join_aka_name_to_name__op, move(scan_aka_name_an1),
+                                                             move(join_name_n1),
+                                                             move(cond_aka_name_to_name_), JoinType::INNER,
+                                                             left_projection_map,
+                                                             right_projection_map_aka_name_to_name_,
+                                                             delim_types_aka_name_to_name_, 0);
 
 
     vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR};
