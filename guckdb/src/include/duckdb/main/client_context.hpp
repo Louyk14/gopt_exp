@@ -265,6 +265,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB11aPlan(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB12aPlan(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB12aPlanNewDirect(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB13aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB13aPlanNewDirect(ClientContext& context);
@@ -311,6 +312,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB31aPlan(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB32aPlan(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB32aPlanNewDirect(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB33aPlan(ClientContext& context);
 
