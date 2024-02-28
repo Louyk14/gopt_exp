@@ -289,6 +289,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB21aPlan(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB22aPlan(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB22aPlanNewDirect(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB23aPlan(ClientContext& context);
 
