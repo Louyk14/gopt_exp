@@ -587,11 +587,13 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
             auto physical_plan_by_hand = GeneratePath(*this);
             physical_plan = move(physical_plan_by_hand);
         }
-        else if (pb_file == "merge_sip") {
+        else if (pb_file == "20-1") {
+            // merge_sip
             auto physical_plan_by_hand = GeneratePathMergeSIP(*this);
             physical_plan = move(physical_plan_by_hand);
         }
-        else if (pb_file == "sip") {
+        else if (pb_file == "20-2") {
+            // merge
             auto physical_plan_by_hand = GeneratePathSIP(*this);
             physical_plan = move(physical_plan_by_hand);
         }
