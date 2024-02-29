@@ -321,6 +321,11 @@ public:
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
 // path query (person - knows - person - forum_person - forum)
     unique_ptr<PhysicalOperator> GeneratePath(ClientContext& context);
+// path query person-knows-person
+// with merge
+    unique_ptr<PhysicalOperator> GeneratePathMergeSIP(ClientContext& context);
+// with sip only
+    unique_ptr<PhysicalOperator> GeneratePathSIP(ClientContext& context);
 
 private:
 	//! Parse statements and resolve pragmas from a query
