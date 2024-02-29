@@ -371,7 +371,7 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
 	// now convert logical query plan into a physical query plan
 	PhysicalPlanGenerator physical_planner(*this);
 	auto physical_plan = physical_planner.CreatePlan(std::move(plan));
-    // std::cout << physical_plan->ToString() << std::endl;
+    std::cout << physical_plan->ToString() << std::endl;
 	profiler.EndPhase();
 
     if (sql_mode == 2 && (query[0] == 's' || query[0] == 'S')) {
@@ -35582,7 +35582,9 @@ unique_ptr<PhysicalOperator> ClientContext::GeneratePathMergeSIP(ClientContext& 
     unique_ptr<LogicalGet> get_op_person1 = move(
             getLogicalGet(*this, table_person, alias_person1, table_index_person1, table_types_person1));
     vector<unique_ptr<Expression>> filter_person1;
-    unique_ptr<TableFilterSet> table_filters_person1 = NULL;
+    unique_ptr<TableFilterSet> table_filters_person1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_p1 = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL, Value::BIGINT(933));
+    table_filters_person1->filters[1] = move(constant_filter_p1);
     unique_ptr<PhysicalTableScan> scan_person1 = make_uniq<PhysicalTableScan>(get_person1_types,
                                                                               get_op_person1->function,
                                                                               get_op_person1->table_index,
@@ -35692,7 +35694,9 @@ unique_ptr<PhysicalOperator> ClientContext::GeneratePathSIP(ClientContext& conte
     unique_ptr<LogicalGet> get_op_person1 = move(
             getLogicalGet(*this, table_person, alias_person1, table_index_person1, table_types_person1));
     vector<unique_ptr<Expression>> filter_person1;
-    unique_ptr<TableFilterSet> table_filters_person1 = NULL;
+    unique_ptr<TableFilterSet> table_filters_person1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_p1 = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL, Value::BIGINT(933));
+    table_filters_person1->filters[1] = move(constant_filter_p1);
     unique_ptr<PhysicalTableScan> scan_person1 = make_uniq<PhysicalTableScan>(get_person1_types,
                                                                               get_op_person1->function,
                                                                               get_op_person1->table_index,
