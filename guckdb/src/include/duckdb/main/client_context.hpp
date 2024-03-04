@@ -321,6 +321,10 @@ public:
 
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
+// butterfly query (person - person - forum - post)
+    unique_ptr<PhysicalOperator> GenerateButterfly(ClientContext& context);
+// clique query (person - person - person - person)
+    unique_ptr<PhysicalOperator> GenerateClique(ClientContext& context);
 // path query (person - knows - person - forum_person - forum)
     unique_ptr<PhysicalOperator> GeneratePath(ClientContext& context);
 // path query person-knows-person
