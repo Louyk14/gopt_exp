@@ -240,7 +240,9 @@ public:
 
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB1aPlanSIP(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB1aPlanMerge(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB1aPlanMergeTest(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB2aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB2aPlanNewDirect(ClientContext& context);
