@@ -36058,7 +36058,9 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateTriangle(ClientContext& cont
     vector<unique_ptr<Expression>> filter_person2;
     unique_ptr<LogicalGet> get_op_person2 = move(
             getLogicalGet(*this, table_person, alias_person2, table_index_person2, table_types_person2));
-    unique_ptr<TableFilterSet> table_filters_person2 = NULL;
+    unique_ptr<TableFilterSet> table_filters_person2 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_person = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL, Value::BIGINT(atoll(paras->data()[0].c_str())));
+    table_filters_person2->filters[1] = move(constant_filter_person);
     unique_ptr<PhysicalTableScan> scan_person2 = make_uniq<PhysicalTableScan>(get_person2_types,
                                                                               get_op_person2->function,
                                                                               get_op_person2->table_index,
@@ -36142,56 +36144,54 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateTriangle(ClientContext& cont
     vector<JoinCondition> cond_forum;
     vector<JoinCondition> other_conditions_forum;
     JoinCondition join_condition_forum, join_condition_forum_person;
-    join_condition_forum_person.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
-    join_condition_forum_person.right = make_uniq<BoundReferenceExpression>("forum_rowid", LogicalType::BIGINT, 0);
+    join_condition_forum_person.left = make_uniq<BoundReferenceExpression>("forum_rowid", LogicalType::BIGINT, 0);
+    join_condition_forum_person.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
     join_condition_forum_person.comparison = ExpressionType::COMPARE_EQUAL;
 
     auto rai_info_forum_person = make_uniq<RAIInfo>();
     rai_info_forum_person->rai = table_forum_person.GetStorage().info->rais[0].get();
-    rai_info_forum_person->rai_type = RAIType::SOURCE_EDGE;
-    rai_info_forum_person->forward = false;
-    rai_info_forum_person->vertex = &table_person;
-    rai_info_forum_person->vertex_id = table_index_person2;
-    rai_info_forum_person->passing_tables[0] = table_index_person2;
-    rai_info_forum_person->left_cardinalities[0] = table_person.GetStorage().info->cardinality;
-    rai_info_forum_person->compact_list = &rai_info_forum_person->rai->alist->compact_backward_list;
+    rai_info_forum_person->rai_type = RAIType::TARGET_EDGE;
+    rai_info_forum_person->forward = true;
+    rai_info_forum_person->vertex = &table_forum;
+    rai_info_forum_person->vertex_id = table_index_forum;
+    rai_info_forum_person->passing_tables[0] = table_index_forum;
+    rai_info_forum_person->left_cardinalities[0] = table_forum.GetStorage().info->cardinality;
+    // rai_info_forum_person->compact_list = &rai_info_forum_person->rai->alist->compact_backward_list;
 
     join_condition_forum_person.rais.push_back(move(rai_info_forum_person));
     cond_forum.push_back(move(join_condition_forum_person));
 
-    join_condition_forum.left = make_uniq<BoundReferenceExpression>("m_ps_forumid_rowid", LogicalType::BIGINT, 1);
-    join_condition_forum.right = make_uniq<BoundReferenceExpression>("forum_rowid", LogicalType::BIGINT, 0);
+    join_condition_forum.left = make_uniq<BoundReferenceExpression>("forum_rowid", LogicalType::BIGINT, 0);
+    join_condition_forum.right = make_uniq<BoundReferenceExpression>("m_ps_forumid_rowid", LogicalType::BIGINT, 1);
     join_condition_forum.comparison = ExpressionType::COMPARE_EQUAL;
 
     auto rai_info_forum = make_uniq<RAIInfo>();
     rai_info_forum->rai = table_post.GetStorage().info->rais[2].get();
-    rai_info_forum->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_forum->rai_type = RAIType::TARGET_EDGE;
     rai_info_forum->forward = true;
     rai_info_forum->vertex = &table_forum;
     rai_info_forum->vertex_id = table_index_forum;
-    rai_info_forum->passing_tables[0] = table_index_post;
-    rai_info_forum->left_cardinalities[0] = table_post.GetStorage().info->cardinality;
-    rai_info_forum->compact_list = &rai_info_forum->rai->alist->compact_forward_list;
+    rai_info_forum->passing_tables[0] = table_index_forum;
+    rai_info_forum->left_cardinalities[0] = table_forum.GetStorage().info->cardinality;
+    // rai_info_forum->compact_list = &rai_info_forum->rai->alist->compact_forward_list;
 
     join_condition_forum.rais.push_back(move(rai_info_forum));
     other_conditions_forum.push_back(move(join_condition_forum));
 
     LogicalComparisonJoin join_forum_op(JoinType::INNER);
-    vector<LogicalType> output_forum_types{LogicalType::BIGINT, LogicalType::BIGINT,
-                                           LogicalType::BIGINT, LogicalType::BIGINT,
-                                           LogicalType::BIGINT};
+    vector<LogicalType> output_forum_types{LogicalType::BIGINT, LogicalType::BIGINT};
     join_forum_op.types = output_forum_types;
-    vector<idx_t> right_projection_map_forum{0};
+    vector<idx_t> right_projection_map_forum{3};
     vector<idx_t> merge_project_map_forum;
     vector<LogicalType> delim_types_forum;
-    auto join_extend_intersect = make_uniq<PhysicalExtendIntersect>(join_forum_op, move(join_post), move(scan_forum), move(cond_forum), move(other_conditions_forum),
+    auto join_extend_intersect = make_uniq<PhysicalExtendIntersect>(join_forum_op, move(scan_forum), move(join_post), move(cond_forum), move(other_conditions_forum),
                                                                     JoinType::INNER, left_projection_map, right_projection_map_forum,
                                                                     merge_project_map_forum, delim_types_forum, 0);
 
     // project
     vector<LogicalType> result_types{LogicalType::BIGINT};
     vector<unique_ptr<Expression>> select_list;
-    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 2);
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 1);
     select_list.push_back(move(result_col0));
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
     projection->children.push_back(move(join_extend_intersect));
@@ -36399,7 +36399,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateButterfly(duckdb::ClientCont
     rai_info_KNOWS_->vertex_id = table_index_PERSON_p1;
     rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p1;
     rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
-    rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact_backward_list;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact_backward_list;
 
     join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
     cond_KNOWS_.push_back(move(join_condition_KNOWS_));
@@ -36417,7 +36417,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateButterfly(duckdb::ClientCont
     rai_info_HASMEMBER_->vertex_id = table_index_PERSON_p1;
     rai_info_HASMEMBER_->passing_tables[0] = table_index_PERSON_p1;
     rai_info_HASMEMBER_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
-    rai_info_HASMEMBER_->compact_list = &rai_info_HASMEMBER_->rai->alist->compact_backward_list;
+    // rai_info_HASMEMBER_->compact_list = &rai_info_HASMEMBER_->rai->alist->compact_backward_list;
 
     join_condition_HASMEMBER_.rais.push_back(move(rai_info_HASMEMBER_));
     cond_KNOWS_.push_back(move(join_condition_HASMEMBER_));
