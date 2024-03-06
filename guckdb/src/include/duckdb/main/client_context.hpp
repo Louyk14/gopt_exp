@@ -408,6 +408,9 @@ private:
     string pb_file;
     //! The parameters used in physical plan
     unique_ptr<std::vector<string>> paras;
+    // start and end time of optimization
+    std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> start_time;
+    std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> end_time;
 };
 
 class ClientContextLock {

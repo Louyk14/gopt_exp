@@ -357,8 +357,14 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
 #endif
 	if (config.enable_optimizer && plan->RequireOptimizer()) {
 		profiler.StartPhase("optimizer");
+
+        start_time = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+
 		Optimizer optimizer(*planner.binder, *this);
 		plan = optimizer.Optimize(std::move(plan));
+
+        end_time = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
+
 		D_ASSERT(plan);
 		profiler.EndPhase();
 
