@@ -36859,7 +36859,6 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateButterflyWOEI(duckdb::Client
                                                        delim_types_LIKES_, 0);
 
 
-
     vector<idx_t> PERSON_p1_ids{COLUMN_IDENTIFIER_ROW_ID, 0};
     vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
     string alias_PERSON_p1 = "p1";
@@ -36914,7 +36913,6 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateButterflyWOEI(duckdb::Client
                                                               right_projection_map_HASMEMBER_,
                                                               merge_project_map_HASMEMBER_,
                                                               delim_types_HASMEMBER_, 0);
-
 
     vector<idx_t> knows_ids{3, 4};
     vector<LogicalType> get_knows_types{LogicalType::BIGINT, LogicalType::BIGINT};
@@ -37488,8 +37486,8 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateCliqueWOEI(duckdb::ClientCon
     rai_info_KNOWS_13->rai_type = RAIType::TARGET_EDGE;
     rai_info_KNOWS_13->forward = true;
     rai_info_KNOWS_13->vertex = &table_PERSON;
-    rai_info_KNOWS_13->vertex_id = table_index_PERSON_p3;
-    rai_info_KNOWS_13->passing_tables[0] = table_index_PERSON_p3;
+    rai_info_KNOWS_13->vertex_id = table_index_PERSON_p1;
+    rai_info_KNOWS_13->passing_tables[0] = table_index_PERSON_p1;
     rai_info_KNOWS_13->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
     // rai_info_KNOWS_13->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
 
@@ -37600,7 +37598,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateCliqueWOEI(duckdb::ClientCon
     rai_info_KNOWS_12->vertex_id = table_index_PERSON_p2;
     rai_info_KNOWS_12->passing_tables[0] = table_index_KNOWS_;
     rai_info_KNOWS_12->left_cardinalities[0] = table_KNOWS.GetStorage().info->cardinality;
-    // rai_info_KNOWS_12->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+    rai_info_KNOWS_12->compact_list = &rai_info_KNOWS_12->rai->alist->compact_forward_list;
 
     join_condition_KNOWS_12.rais.push_back(move(rai_info_KNOWS_12));
     cond_KNOWS_12_merge.push_back(move(join_condition_KNOWS_12));
