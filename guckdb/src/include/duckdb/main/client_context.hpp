@@ -321,10 +321,13 @@ public:
 
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateTriangleWOEI(ClientContext& context);
 // butterfly query (person - person - forum - post)
     unique_ptr<PhysicalOperator> GenerateButterfly(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateButterflyWOEI(ClientContext& context);
 // clique query (person - person - person - person)
     unique_ptr<PhysicalOperator> GenerateClique(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateCliqueWOEI(ClientContext& context);
 // path query (person - knows - person - forum_person - forum)
     unique_ptr<PhysicalOperator> GeneratePath(ClientContext& context);
 // path query person-knows-person
@@ -408,6 +411,7 @@ private:
     string pb_file;
     //! The parameters used in physical plan
     unique_ptr<std::vector<string>> paras;
+public:
     // start and end time of optimization
     std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> start_time;
     std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> end_time;
