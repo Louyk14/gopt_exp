@@ -36979,6 +36979,43 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateButterflyWOEI(duckdb::Client
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
     projection->children.push_back(move(join_KNOWS_));
 
+    // aggregate
+    string agg_name = "min";
+    string agg_error = "";
+    QueryErrorContext error_context(NULL, NULL);
+    auto min_func = Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, "", "",
+                                      "min", OnEntryNotFound::RETURN_NULL, error_context);
+    auto& min_func_set = min_func->Cast<AggregateFunctionCatalogEntry>();
+    // bind the aggregate
+    FunctionBinder function_binder(context);
+
+    vector<LogicalType> types_bigint;
+    types_bigint.push_back(LogicalType::BIGINT);
+    idx_t best_function_bigint = function_binder.BindFunction(agg_name, min_func_set.functions, types_bigint, agg_error);
+    auto bound_function_min_bigint = min_func_set.functions.GetFunctionByOffset(best_function_bigint);
+
+    auto first_children = make_uniq<BoundReferenceExpression>("production_note", LogicalType::BIGINT, 0);
+    vector<unique_ptr<Expression>> childrenlist1;
+    childrenlist1.push_back(move(first_children));
+    auto aggregate1 =
+            function_binder.BindAggregateFunction(bound_function_min_bigint, std::move(childrenlist1), nullptr, AggregateType::NON_DISTINCT);
+
+    auto second_children = make_uniq<BoundReferenceExpression>("movie_title", LogicalType::BIGINT, 1);
+    vector<unique_ptr<Expression>> childrenlist2;
+    childrenlist2.push_back(move(second_children));
+    auto aggregate2 =
+            function_binder.BindAggregateFunction(bound_function_min_bigint, std::move(childrenlist2), nullptr, AggregateType::NON_DISTINCT);
+
+    vector<unique_ptr<Expression>> aggregates;
+    aggregates.push_back(move(aggregate1));
+    aggregates.push_back(move(aggregate2));
+
+    vector<LogicalType> aggregate_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    auto ungrouped_aggregate = make_uniq<PhysicalUngroupedAggregate>(aggregate_types, move(aggregates), 0);
+    ungrouped_aggregate->children.push_back(move(projection));
+
+    return ungrouped_aggregate;
+
     return projection;
 }
 
