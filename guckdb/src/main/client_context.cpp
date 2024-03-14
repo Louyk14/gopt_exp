@@ -610,11 +610,21 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
             physical_plan = move(physical_plan_by_hand);
         }
         else if (pb_file == "21-7") {
+            auto physical_plan_by_hand = GenerateButterflyPara(*this);
+            // auto physical_plan_by_hand = GenerateButterflyWOEIPara(*this);
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "21-8") {
+            auto physical_plan_by_hand = GenerateCliquePara(*this);
+            // auto physical_plan_by_hand = GenerateCliqueWOEIPara(*this);
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "21-9") {
             // auto physical_plan_by_hand = GenerateButterflyPara(*this);
             auto physical_plan_by_hand = GenerateButterflyWOEIPara(*this);
             physical_plan = move(physical_plan_by_hand);
         }
-        else if (pb_file == "21-8") {
+        else if (pb_file == "21-10") {
             // auto physical_plan_by_hand = GenerateCliquePara(*this);
             auto physical_plan_by_hand = GenerateCliqueWOEIPara(*this);
             physical_plan = move(physical_plan_by_hand);
