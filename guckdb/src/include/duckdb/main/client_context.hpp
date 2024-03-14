@@ -325,9 +325,13 @@ public:
 // butterfly query (person - person - forum - post)
     unique_ptr<PhysicalOperator> GenerateButterfly(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyWOEI(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateButterflyPara(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateButterflyWOEIPara(ClientContext& context);
 // clique query (person - person - person - person)
     unique_ptr<PhysicalOperator> GenerateClique(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateCliqueWOEI(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateCliquePara(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateCliqueWOEIPara(ClientContext& context);
 // path query (person - knows - person - forum_person - forum)
     unique_ptr<PhysicalOperator> GeneratePath(ClientContext& context);
 // path query person-knows-person
