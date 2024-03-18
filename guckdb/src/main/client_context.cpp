@@ -643,6 +643,34 @@ ClientContext::CreatePreparedStatement(ClientContextLock &lock, const string &qu
             auto physical_plan_by_hand = GeneratePathSIP(*this);
             physical_plan = move(physical_plan_by_hand);
         }
+        else if (pb_file == "22-2") {
+            auto physical_plan_by_hand = GenerateIC21PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-6") {
+            auto physical_plan_by_hand = GenerateIC61PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-7") {
+            auto physical_plan_by_hand = GenerateIC62PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-9") {
+            auto physical_plan_by_hand = GenerateIC91PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-10") {
+            auto physical_plan_by_hand = GenerateIC92PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-11") {
+            auto physical_plan_by_hand = GenerateIC111PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
+        else if (pb_file == "22-12") {
+            auto physical_plan_by_hand = GenerateIC112PlanPPFilter();
+            physical_plan = move(physical_plan_by_hand);
+        }
     }
 
     if (sql_mode == 1 && (query[0] == 's' || query[0] == 'S')) {
@@ -9152,6 +9180,1870 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC121PlanGLogue() {
     select_list.push_back(move(result_col2));
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
     projection->children.push_back(move(join_ISSUBCLASSOF_));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC21PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_person = "person";
+    string table_edge_knows = "knows";
+    string table_vertex_comment = "comment";
+    idx_t table_index_person1 = 6;
+    idx_t table_index_person2 = 8;
+    idx_t table_index_knows = 7;
+    idx_t table_index_comment = 11;
+
+
+    auto table_or_view_person = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                  table_vertex_person, OnEntryNotFound::RETURN_NULL);
+    auto &table_person = table_or_view_person->Cast<TableCatalogEntry>();
+
+
+    auto table_or_view_knows = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                 table_edge_knows, OnEntryNotFound::RETURN_NULL);
+    auto &table_knows = table_or_view_knows->Cast<TableCatalogEntry>();
+
+    auto table_or_view_comment = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                 table_vertex_comment, OnEntryNotFound::RETURN_NULL);
+    auto &table_comment = table_or_view_comment->Cast<TableCatalogEntry>();
+
+
+    vector<idx_t> person2_ids{COLUMN_IDENTIFIER_ROW_ID, 0, 1, 2};
+    vector<LogicalType> get_person2_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                          LogicalType::VARCHAR};
+    string alias_person2 = "p2";
+    vector<LogicalType> table_types_person2;
+    vector<unique_ptr<Expression>> filter_person2;
+    unique_ptr<LogicalGet> get_op_person2 = move(
+            getLogicalGet(*this, table_person, alias_person2, table_index_person2, table_types_person2));
+    unique_ptr<TableFilterSet> table_filters_person2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_person2 = make_uniq<PhysicalTableScan>(get_person2_types,
+                                                                              get_op_person2->function,
+                                                                              get_op_person2->table_index,
+                                                                              move(get_op_person2->bind_data),
+                                                                              table_types_person2, person2_ids,
+                                                                              move(filter_person2), vector<column_t>(),
+                                                                              get_op_person2->names,
+                                                                              std::move(table_filters_person2),
+                                                                              get_op_person2->estimated_cardinality,
+                                                                              get_op_person2->extra_info);
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> person1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_person1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_person1 = "p1";
+    vector<LogicalType> table_types_person1;
+    unique_ptr<LogicalGet> get_op_person1 = move(
+            getLogicalGet(*this, table_person, alias_person1, table_index_person1, table_types_person1));
+    vector<unique_ptr<Expression>> filter_person1;
+    unique_ptr<TableFilterSet> table_filters_person1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_person1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_person1 = make_uniq<PhysicalTableScan>(get_person1_types,
+                                                                              get_op_person1->function,
+                                                                              get_op_person1->table_index,
+                                                                              move(get_op_person1->bind_data),
+                                                                              table_types_person1, person1_ids,
+                                                                              move(filter_person1), vector<column_t>(),
+                                                                              get_op_person1->names,
+                                                                              std::move(table_filters_person1),
+                                                                              get_op_person1->estimated_cardinality,
+                                                                              get_op_person1->extra_info);
+
+    vector<JoinCondition> cond_knows;
+    JoinCondition join_condition_knows;
+    join_condition_knows.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_knows.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_knows.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_knows = make_uniq<RAIInfo>();
+    rai_info_knows->rai = table_knows.GetStorage().info->rais[0].get();
+    rai_info_knows->rai_type = RAIType::TARGET_EDGE;
+    rai_info_knows->forward = true;
+    rai_info_knows->vertex = &table_person;
+    rai_info_knows->vertex_id = table_index_person2;
+    rai_info_knows->passing_tables[0] = table_index_person2;
+    rai_info_knows->left_cardinalities[0] = table_person.GetStorage().info->cardinality;
+    // rai_info_knows->compact_list = &rai_info_knows->rai->alist->compact_backward_list;
+
+    join_condition_knows.rais.push_back(move(rai_info_knows));
+    cond_knows.push_back(move(join_condition_knows));
+
+    LogicalComparisonJoin join_knows_op(JoinType::INNER);
+    vector<LogicalType> output_knows_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                           LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_knows_op.types = output_knows_types;
+    vector<idx_t> right_projection_map_knows{1};
+    vector<idx_t> merge_project_map;
+    vector<LogicalType> delim_types;
+    auto join_knows = make_uniq<PhysicalMergeSIPJoin>(join_knows_op, move(scan_person2), move(scan_person1),
+                                                      move(cond_knows),
+                                                      JoinType::INNER, left_projection_map, right_projection_map_knows,
+                                                      merge_project_map, delim_types, 0);
+
+    // join comment with person-person
+    idx_t p_comment_date = atoll(paras->data()[1].c_str());
+    Value p_comment = Value::BIGINT(p_comment_date);
+    vector<idx_t> comment_ids{10, 1, 0, 4};
+    vector<LogicalType> get_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                          LogicalType::VARCHAR};
+    string alias_comment = "c";
+    vector<LogicalType> table_types_comment;
+    vector<unique_ptr<Expression>> filter_comment;
+    unique_ptr<LogicalGet> get_op_comment = move(
+            getLogicalGet(*this, table_comment, alias_comment, table_index_comment, table_types_comment));
+    unique_ptr<TableFilterSet> table_filters_comment = NULL;
+    unique_ptr<PhysicalTableScan> scan_comment = make_uniq<PhysicalTableScan>(get_comment_types, get_op_comment->function,
+                                                                            get_op_comment->table_index,
+                                                                            move(get_op_comment->bind_data),
+                                                                            table_types_comment, comment_ids,
+                                                                            move(filter_comment), vector<column_t>(),
+                                                                            get_op_comment->names,
+                                                                            std::move(table_filters_comment),
+                                                                            get_op_comment->estimated_cardinality,
+                                                                            get_op_comment->extra_info);
+
+    vector<JoinCondition> cond_comment;
+    JoinCondition join_condition_comment;
+    join_condition_comment.left = make_uniq<BoundReferenceExpression>("m_creatorid_rowid", LogicalType::BIGINT, 0);
+    join_condition_comment.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_comment.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_comment = make_uniq<RAIInfo>();
+    rai_info_comment->rai = table_comment.GetStorage().info->rais[0].get();
+    rai_info_comment->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_comment->forward = true;
+    rai_info_comment->vertex = &table_person;
+    rai_info_comment->vertex_id = table_index_person2;
+    rai_info_comment->passing_tables[0] = table_index_comment;
+    rai_info_comment->left_cardinalities[0] = table_comment.GetStorage().info->cardinality;
+    rai_info_comment->compact_list = &rai_info_comment->rai->alist->compact_forward_list;
+
+    join_condition_comment.rais.push_back(move(rai_info_comment));
+    cond_comment.push_back(move(join_condition_comment));
+
+    LogicalComparisonJoin join_comment_op(JoinType::INNER);
+    vector<LogicalType> output_comment_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                             LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                             LogicalType::VARCHAR};
+    join_comment_op.types = output_comment_types;
+    vector<idx_t> right_projection_map_comment{1, 2, 3};
+    vector<idx_t> merge_project_map_comment;
+    vector<LogicalType> delim_types_comment;
+    auto join_place = make_uniq<PhysicalSIPJoin>(join_comment_op, move(scan_comment), move(join_knows), move(cond_comment),
+                                                 JoinType::INNER, left_projection_map, right_projection_map_comment,
+                                                 delim_types_comment, 0);
+
+
+    vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                             LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                             LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto creationDate_left = make_uniq<BoundReferenceExpression>("createDate", LogicalType::BIGINT, 1);
+    auto comment_date_right = make_uniq<BoundConstantExpression>(p_comment);
+    auto comment_create_date_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
+                                                                             move(creationDate_left),
+                                                                             move(comment_date_right));
+
+    select_list_filter.push_back(move(comment_create_date_expr));
+    unique_ptr<PhysicalFilter> filter_date = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_date->children.push_back(move(join_place));
+
+
+    // project
+    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                     LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 4);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 5);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("p_lastname", LogicalType::VARCHAR, 6);
+    auto result_col3 = make_uniq<BoundReferenceExpression>("m_messageid", LogicalType::BIGINT, 2);
+    auto result_col4 = make_uniq<BoundReferenceExpression>("m_content", LogicalType::VARCHAR, 3);
+    auto result_col5 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    select_list.push_back(move(result_col3));
+    select_list.push_back(move(result_col4));
+    select_list.push_back(move(result_col5));
+
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_date));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC61PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_POST_m = "POST";
+    string table_vertex_TAG_t1 = "TAG";
+    string table_vertex_TAG_t2 = "TAG";
+    string table_vertex_KNOWS_ = "KNOWS";
+    string table_vertex_HASTAG_ = "POST_TAG";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_POST_m = 3;
+    idx_t table_index_TAG_t1 = 4;
+    idx_t table_index_TAG_t2 = 5;
+    idx_t table_index_KNOWS_ = 6;
+    idx_t table_index_HASTAG_ = 9;
+
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_POST = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_POST_m,
+                                                OnEntryNotFound::RETURN_NULL);
+    auto &table_POST = table_or_view_POST->Cast<TableCatalogEntry>();
+    auto table_or_view_TAG = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_TAG_t1,
+                                               OnEntryNotFound::RETURN_NULL);
+    auto &table_TAG = table_or_view_TAG->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+    auto table_or_view_HASTAG = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_HASTAG_,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_HASTAG = table_or_view_HASTAG->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types,
+                                                                                get_op_PERSON_p1->function,
+                                                                                get_op_PERSON_p1->table_index,
+                                                                                move(get_op_PERSON_p1->bind_data),
+                                                                                table_types_PERSON_p1, PERSON_p1_ids,
+                                                                                move(filter_PERSON_p1),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p1->names,
+                                                                                std::move(table_filters_PERSON_p1),
+                                                                                get_op_PERSON_p1->estimated_cardinality,
+                                                                                get_op_PERSON_p1->extra_info);
+
+
+    vector<idx_t> PERSON_p2_ids{COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types,
+                                                                                get_op_PERSON_p2->function,
+                                                                                get_op_PERSON_p2->table_index,
+                                                                                move(get_op_PERSON_p2->bind_data),
+                                                                                table_types_PERSON_p2, PERSON_p2_ids,
+                                                                                move(filter_PERSON_p2),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p2->names,
+                                                                                std::move(table_filters_PERSON_p2),
+                                                                                get_op_PERSON_p2->estimated_cardinality,
+                                                                                get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(scan_PERSON_p1), move(cond_KNOWS_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_,
+                                                       delim_types_KNOWS_, 0);
+
+
+    vector<idx_t> POST_m_ids{COLUMN_IDENTIFIER_ROW_ID, 11};
+    vector<LogicalType> get_POST_m_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_POST_m = "m";
+    vector<LogicalType> table_types_POST_m;
+    vector<unique_ptr<Expression>> filter_POST_m;
+    unique_ptr<LogicalGet> get_op_POST_m = move(
+            getLogicalGet(*this, table_POST, alias_POST_m, table_index_POST_m, table_types_POST_m));
+    unique_ptr<TableFilterSet> table_filters_POST_m = NULL;
+    unique_ptr<PhysicalTableScan> scan_POST_m = make_uniq<PhysicalTableScan>(get_POST_m_types, get_op_POST_m->function,
+                                                                             get_op_POST_m->table_index,
+                                                                             move(get_op_POST_m->bind_data),
+                                                                             table_types_POST_m, POST_m_ids,
+                                                                             move(filter_POST_m), vector<column_t>(),
+                                                                             get_op_POST_m->names,
+                                                                             std::move(table_filters_POST_m),
+                                                                             get_op_POST_m->estimated_cardinality,
+                                                                             get_op_POST_m->extra_info);
+
+
+    vector<JoinCondition> cond_HASCREATOR_;
+    JoinCondition join_condition_HASCREATOR_;
+    join_condition_HASCREATOR_.left = make_uniq<BoundReferenceExpression>("m_creatorid_rowid", LogicalType::BIGINT, 1);
+    join_condition_HASCREATOR_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASCREATOR_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASCREATOR_ = make_uniq<RAIInfo>();
+    rai_info_HASCREATOR_->rai = table_POST.GetStorage().info->rais[0].get();
+    rai_info_HASCREATOR_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_HASCREATOR_->forward = true;
+    rai_info_HASCREATOR_->vertex = &table_PERSON;
+    rai_info_HASCREATOR_->vertex_id = table_index_PERSON_p2;
+    rai_info_HASCREATOR_->passing_tables[0] = table_index_POST_m;
+    rai_info_HASCREATOR_->left_cardinalities[0] = table_POST.GetStorage().info->cardinality;
+    rai_info_HASCREATOR_->compact_list = &rai_info_HASCREATOR_->rai->alist->compact_forward_list;
+
+    join_condition_HASCREATOR_.rais.push_back(move(rai_info_HASCREATOR_));
+    cond_HASCREATOR_.push_back(move(join_condition_HASCREATOR_));
+
+    LogicalComparisonJoin join_HASCREATOR__op(JoinType::INNER);
+    vector<LogicalType> output_HASCREATOR__types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT};
+    join_HASCREATOR__op.types = output_HASCREATOR__types;
+    vector<idx_t> right_projection_map_HASCREATOR_{0};
+    vector<idx_t> merge_project_map_HASCREATOR_;
+    vector<LogicalType> delim_types_HASCREATOR_;
+    auto join_HASCREATOR_ = make_uniq<PhysicalSIPJoin>(join_HASCREATOR__op, move(scan_POST_m), move(join_KNOWS_), move(cond_HASCREATOR_),
+                                                            JoinType::INNER, left_projection_map,
+                                                            right_projection_map_HASCREATOR_,
+                                                            delim_types_HASCREATOR_, 0);
+
+    string p_tag_name = paras->data()[1].c_str(); // 933;
+    Value p_tag = Value(p_tag_name);
+    vector<idx_t> TAG_t1_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_TAG_t1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_TAG_t1 = "t1";
+    vector<LogicalType> table_types_TAG_t1;
+    vector<unique_ptr<Expression>> filter_TAG_t1;
+    unique_ptr<LogicalGet> get_op_TAG_t1 = move(
+            getLogicalGet(*this, table_TAG, alias_TAG_t1, table_index_TAG_t1, table_types_TAG_t1));
+    unique_ptr<TableFilterSet> table_filters_TAG_t1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_TAG_t1 = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_tag_name);
+    table_filters_TAG_t1->filters[1] = move(constant_filter_TAG_t1);
+    unique_ptr<PhysicalTableScan> scan_TAG_t1 = make_uniq<PhysicalTableScan>(get_TAG_t1_types, get_op_TAG_t1->function,
+                                                                             get_op_TAG_t1->table_index,
+                                                                             move(get_op_TAG_t1->bind_data),
+                                                                             table_types_TAG_t1, TAG_t1_ids,
+                                                                             move(filter_TAG_t1), vector<column_t>(),
+                                                                             get_op_TAG_t1->names,
+                                                                             std::move(table_filters_TAG_t1),
+                                                                             get_op_TAG_t1->estimated_cardinality,
+                                                                             get_op_TAG_t1->extra_info);
+
+
+    vector<JoinCondition> cond_HASTAG_;
+    JoinCondition join_condition_HASTAG_;
+    join_condition_HASTAG_.left = make_uniq<BoundReferenceExpression>("tag_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASTAG_.right = make_uniq<BoundReferenceExpression>("post_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASTAG_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASTAG_ = make_uniq<RAIInfo>();
+    rai_info_HASTAG_->rai = table_HASTAG.GetStorage().info->rais[0].get();
+    rai_info_HASTAG_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_HASTAG_->forward = true;
+    rai_info_HASTAG_->vertex = &table_TAG;
+    rai_info_HASTAG_->vertex_id = table_index_TAG_t1;
+    rai_info_HASTAG_->passing_tables[0] = table_index_TAG_t1;
+    rai_info_HASTAG_->left_cardinalities[0] = table_TAG.GetStorage().info->cardinality;
+    // rai_info_HASTAG_->compact_list = &rai_info_HASTAG_->rai->alist->compact__list;
+
+    join_condition_HASTAG_.rais.push_back(move(rai_info_HASTAG_));
+    cond_HASTAG_.push_back(move(join_condition_HASTAG_));
+
+    LogicalComparisonJoin join_HASTAG__op(JoinType::INNER);
+    vector<LogicalType> output_HASTAG__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_HASTAG__op.types = output_HASTAG__types;
+    vector<idx_t> right_projection_map_HASTAG_{0};
+    vector<idx_t> merge_project_map_HASTAG_;
+    vector<LogicalType> delim_types_HASTAG_;
+    auto join_HASTAG_ = make_uniq<PhysicalMergeSIPJoin>(join_HASTAG__op, move(scan_TAG_t1), move(join_HASCREATOR_), move(cond_HASTAG_),
+                                                        JoinType::INNER, left_projection_map,
+                                                        right_projection_map_HASTAG_, merge_project_map_HASTAG_,
+                                                        delim_types_HASTAG_, 0);
+
+
+    vector<idx_t> TAG_t2_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_TAG_t2_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_TAG_t2 = "t2";
+    vector<LogicalType> table_types_TAG_t2;
+    vector<unique_ptr<Expression>> filter_TAG_t2;
+    unique_ptr<LogicalGet> get_op_TAG_t2 = move(
+            getLogicalGet(*this, table_TAG, alias_TAG_t2, table_index_TAG_t2, table_types_TAG_t2));
+    unique_ptr<TableFilterSet> table_filters_TAG_t2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_TAG_t2 = make_uniq<PhysicalTableScan>(get_TAG_t2_types, get_op_TAG_t2->function,
+                                                                             get_op_TAG_t2->table_index,
+                                                                             move(get_op_TAG_t2->bind_data),
+                                                                             table_types_TAG_t2, TAG_t2_ids,
+                                                                             move(filter_TAG_t2), vector<column_t>(),
+                                                                             get_op_TAG_t2->names,
+                                                                             std::move(table_filters_TAG_t2),
+                                                                             get_op_TAG_t2->estimated_cardinality,
+                                                                             get_op_TAG_t2->extra_info);
+
+
+    vector<JoinCondition> cond_TAG_t2;
+    JoinCondition join_condition_TAG_t2;
+    join_condition_TAG_t2.left = make_uniq<BoundReferenceExpression>("tag_rowid", LogicalType::BIGINT, 0);
+    join_condition_TAG_t2.right = make_uniq<BoundReferenceExpression>("post_rowid", LogicalType::BIGINT, 2);
+    join_condition_TAG_t2.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_TAG_t2 = make_uniq<RAIInfo>();
+    rai_info_TAG_t2->rai = table_HASTAG.GetStorage().info->rais[0].get();
+    rai_info_TAG_t2->rai_type = RAIType::TARGET_EDGE;
+    rai_info_TAG_t2->forward = true;
+    rai_info_TAG_t2->vertex = &table_TAG;
+    rai_info_TAG_t2->vertex_id = table_index_TAG_t2;
+    rai_info_TAG_t2->passing_tables[0] = table_index_TAG_t2;
+    rai_info_TAG_t2->left_cardinalities[0] = table_TAG.GetStorage().info->cardinality;
+    // rai_info_TAG_t2->compact_list = &rai_info_TAG_t2->rai->alist->compact__list;
+
+    join_condition_TAG_t2.rais.push_back(move(rai_info_TAG_t2));
+    cond_TAG_t2.push_back(move(join_condition_TAG_t2));
+
+    LogicalComparisonJoin join_TAG_t2_op(JoinType::INNER);
+    vector<LogicalType> output_TAG_t2_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_TAG_t2_op.types = output_TAG_t2_types;
+    vector<idx_t> right_projection_map_TAG_t2{0};
+    vector<idx_t> merge_project_map_TAG_t2;
+    vector<LogicalType> delim_types_TAG_t2;
+    auto join_TAG_t2 = make_uniq<PhysicalMergeSIPJoin>(join_TAG_t2_op, move(scan_TAG_t2), move(join_HASTAG_), move(cond_TAG_t2), JoinType::INNER,
+                                                       left_projection_map, right_projection_map_TAG_t2,
+                                                       merge_project_map_TAG_t2, delim_types_TAG_t2,
+                                                       0);
+
+    vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto tag_name_left = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto tag_name_right = make_uniq<BoundConstantExpression>(p_tag);
+    auto comment_tag_name_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_NOTEQUAL,
+                                                                             move(tag_name_left),
+                                                                             move(tag_name_right));
+
+    select_list_filter.push_back(move(comment_tag_name_expr));
+    unique_ptr<PhysicalFilter> filter_tag_name = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_tag_name->children.push_back(move(join_TAG_t2));
+
+    vector<LogicalType> result_types{LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("t_name", LogicalType::VARCHAR, 1);
+    select_list.push_back(move(result_col0));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_tag_name));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC62PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_PERSON_p3 = "PERSON";
+    string table_vertex_POST_m = "POST";
+    string table_vertex_TAG_t1 = "TAG";
+    string table_vertex_TAG_t2 = "TAG";
+    string table_vertex_KNOWS_ = "KNOWS";
+    string table_vertex_HASTAG_ = "POST_TAG";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_PERSON_p3 = 7;
+    idx_t table_index_POST_m = 3;
+    idx_t table_index_TAG_t1 = 4;
+    idx_t table_index_TAG_t2 = 5;
+    idx_t table_index_KNOWS_ = 6;
+    idx_t table_index_HASTAG_ = 9;
+
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_POST = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_POST_m,
+                                                OnEntryNotFound::RETURN_NULL);
+    auto &table_POST = table_or_view_POST->Cast<TableCatalogEntry>();
+    auto table_or_view_TAG = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_TAG_t1,
+                                               OnEntryNotFound::RETURN_NULL);
+    auto &table_TAG = table_or_view_TAG->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+    auto table_or_view_HASTAG = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_HASTAG_,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_HASTAG = table_or_view_HASTAG->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types,
+                                                                                get_op_PERSON_p1->function,
+                                                                                get_op_PERSON_p1->table_index,
+                                                                                move(get_op_PERSON_p1->bind_data),
+                                                                                table_types_PERSON_p1, PERSON_p1_ids,
+                                                                                move(filter_PERSON_p1),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p1->names,
+                                                                                std::move(table_filters_PERSON_p1),
+                                                                                get_op_PERSON_p1->estimated_cardinality,
+                                                                                get_op_PERSON_p1->extra_info);
+
+
+    vector<idx_t> PERSON_p2_ids{COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types,
+                                                                                get_op_PERSON_p2->function,
+                                                                                get_op_PERSON_p2->table_index,
+                                                                                move(get_op_PERSON_p2->bind_data),
+                                                                                table_types_PERSON_p2, PERSON_p2_ids,
+                                                                                move(filter_PERSON_p2),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p2->names,
+                                                                                std::move(table_filters_PERSON_p2),
+                                                                                get_op_PERSON_p2->estimated_cardinality,
+                                                                                get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(scan_PERSON_p1),
+                                                       move(cond_KNOWS_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_,
+                                                       delim_types_KNOWS_, 0);
+
+    vector<idx_t> PERSON_p3_ids{COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p3_types{LogicalType::BIGINT};
+    string alias_PERSON_p3 = "p3";
+    vector<LogicalType> table_types_PERSON_p3;
+    vector<unique_ptr<Expression>> filter_PERSON_p3;
+    unique_ptr<LogicalGet> get_op_PERSON_p3 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p3, table_index_PERSON_p3, table_types_PERSON_p3));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p3 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p3 = make_uniq<PhysicalTableScan>(get_PERSON_p3_types,
+                                                                                get_op_PERSON_p3->function,
+                                                                                get_op_PERSON_p3->table_index,
+                                                                                move(get_op_PERSON_p3->bind_data),
+                                                                                table_types_PERSON_p3, PERSON_p3_ids,
+                                                                                move(filter_PERSON_p3),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p3->names,
+                                                                                std::move(table_filters_PERSON_p3),
+                                                                                get_op_PERSON_p3->estimated_cardinality,
+                                                                                get_op_PERSON_p3->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_k2;
+    JoinCondition join_condition_KNOWS_k2;
+    join_condition_KNOWS_k2.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_k2.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_k2.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_k2 = make_uniq<RAIInfo>();
+    rai_info_KNOWS_k2->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_k2->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_k2->forward = true;
+    rai_info_KNOWS_k2->vertex = &table_PERSON;
+    rai_info_KNOWS_k2->vertex_id = table_index_PERSON_p3;
+    rai_info_KNOWS_k2->passing_tables[0] = table_index_PERSON_p3;
+    rai_info_KNOWS_k2->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_k2.rais.push_back(move(rai_info_KNOWS_k2));
+    cond_KNOWS_k2.push_back(move(join_condition_KNOWS_k2));
+
+    LogicalComparisonJoin join_KNOWS_k2_op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS_k2_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS_k2_op.types = output_KNOWS_k2_types;
+    vector<idx_t> right_projection_map_KNOWS_k2{1};
+    vector<idx_t> merge_project_map_KNOWS_k2;
+    vector<LogicalType> delim_types_KNOWS_k2;
+    auto join_KNOWS_k2 = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS_k2_op, move(scan_PERSON_p3), move(join_KNOWS_),
+                                                       move(cond_KNOWS_k2),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_k2, merge_project_map_KNOWS_k2,
+                                                       delim_types_KNOWS_k2, 0);
+
+
+    vector<idx_t> POST_m_ids{COLUMN_IDENTIFIER_ROW_ID, 11};
+    vector<LogicalType> get_POST_m_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_POST_m = "m";
+    vector<LogicalType> table_types_POST_m;
+    vector<unique_ptr<Expression>> filter_POST_m;
+    unique_ptr<LogicalGet> get_op_POST_m = move(
+            getLogicalGet(*this, table_POST, alias_POST_m, table_index_POST_m, table_types_POST_m));
+    unique_ptr<TableFilterSet> table_filters_POST_m = NULL;
+    unique_ptr<PhysicalTableScan> scan_POST_m = make_uniq<PhysicalTableScan>(get_POST_m_types, get_op_POST_m->function,
+                                                                             get_op_POST_m->table_index,
+                                                                             move(get_op_POST_m->bind_data),
+                                                                             table_types_POST_m, POST_m_ids,
+                                                                             move(filter_POST_m), vector<column_t>(),
+                                                                             get_op_POST_m->names,
+                                                                             std::move(table_filters_POST_m),
+                                                                             get_op_POST_m->estimated_cardinality,
+                                                                             get_op_POST_m->extra_info);
+
+
+    vector<JoinCondition> cond_HASCREATOR_;
+    JoinCondition join_condition_HASCREATOR_;
+    join_condition_HASCREATOR_.left = make_uniq<BoundReferenceExpression>("m_creatorid_rowid", LogicalType::BIGINT, 1);
+    join_condition_HASCREATOR_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASCREATOR_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASCREATOR_ = make_uniq<RAIInfo>();
+    rai_info_HASCREATOR_->rai = table_POST.GetStorage().info->rais[0].get();
+    rai_info_HASCREATOR_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_HASCREATOR_->forward = true;
+    rai_info_HASCREATOR_->vertex = &table_PERSON;
+    rai_info_HASCREATOR_->vertex_id = table_index_PERSON_p2;
+    rai_info_HASCREATOR_->passing_tables[0] = table_index_POST_m;
+    rai_info_HASCREATOR_->left_cardinalities[0] = table_POST.GetStorage().info->cardinality;
+    rai_info_HASCREATOR_->compact_list = &rai_info_HASCREATOR_->rai->alist->compact_forward_list;
+
+    join_condition_HASCREATOR_.rais.push_back(move(rai_info_HASCREATOR_));
+    cond_HASCREATOR_.push_back(move(join_condition_HASCREATOR_));
+
+    LogicalComparisonJoin join_HASCREATOR__op(JoinType::INNER);
+    vector<LogicalType> output_HASCREATOR__types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT};
+    join_HASCREATOR__op.types = output_HASCREATOR__types;
+    vector<idx_t> right_projection_map_HASCREATOR_{0};
+    vector<idx_t> merge_project_map_HASCREATOR_;
+    vector<LogicalType> delim_types_HASCREATOR_;
+    auto join_HASCREATOR_ = make_uniq<PhysicalSIPJoin>(join_HASCREATOR__op, move(scan_POST_m), move(join_KNOWS_k2),
+                                                       move(cond_HASCREATOR_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_HASCREATOR_,
+                                                       delim_types_HASCREATOR_, 0);
+
+    string p_tag_name = paras->data()[1].c_str(); // 933;
+    Value p_tag = Value(p_tag_name);
+    vector<idx_t> TAG_t1_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_TAG_t1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_TAG_t1 = "t1";
+    vector<LogicalType> table_types_TAG_t1;
+    vector<unique_ptr<Expression>> filter_TAG_t1;
+    unique_ptr<LogicalGet> get_op_TAG_t1 = move(
+            getLogicalGet(*this, table_TAG, alias_TAG_t1, table_index_TAG_t1, table_types_TAG_t1));
+    unique_ptr<TableFilterSet> table_filters_TAG_t1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_TAG_t1 = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                          p_tag_name);
+    table_filters_TAG_t1->filters[1] = move(constant_filter_TAG_t1);
+    unique_ptr<PhysicalTableScan> scan_TAG_t1 = make_uniq<PhysicalTableScan>(get_TAG_t1_types, get_op_TAG_t1->function,
+                                                                             get_op_TAG_t1->table_index,
+                                                                             move(get_op_TAG_t1->bind_data),
+                                                                             table_types_TAG_t1, TAG_t1_ids,
+                                                                             move(filter_TAG_t1), vector<column_t>(),
+                                                                             get_op_TAG_t1->names,
+                                                                             std::move(table_filters_TAG_t1),
+                                                                             get_op_TAG_t1->estimated_cardinality,
+                                                                             get_op_TAG_t1->extra_info);
+
+
+    vector<JoinCondition> cond_HASTAG_;
+    JoinCondition join_condition_HASTAG_;
+    join_condition_HASTAG_.left = make_uniq<BoundReferenceExpression>("tag_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASTAG_.right = make_uniq<BoundReferenceExpression>("post_rowid", LogicalType::BIGINT, 0);
+    join_condition_HASTAG_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASTAG_ = make_uniq<RAIInfo>();
+    rai_info_HASTAG_->rai = table_HASTAG.GetStorage().info->rais[0].get();
+    rai_info_HASTAG_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_HASTAG_->forward = true;
+    rai_info_HASTAG_->vertex = &table_TAG;
+    rai_info_HASTAG_->vertex_id = table_index_TAG_t1;
+    rai_info_HASTAG_->passing_tables[0] = table_index_TAG_t1;
+    rai_info_HASTAG_->left_cardinalities[0] = table_TAG.GetStorage().info->cardinality;
+    // rai_info_HASTAG_->compact_list = &rai_info_HASTAG_->rai->alist->compact__list;
+
+    join_condition_HASTAG_.rais.push_back(move(rai_info_HASTAG_));
+    cond_HASTAG_.push_back(move(join_condition_HASTAG_));
+
+    LogicalComparisonJoin join_HASTAG__op(JoinType::INNER);
+    vector<LogicalType> output_HASTAG__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_HASTAG__op.types = output_HASTAG__types;
+    vector<idx_t> right_projection_map_HASTAG_{0};
+    vector<idx_t> merge_project_map_HASTAG_;
+    vector<LogicalType> delim_types_HASTAG_;
+    auto join_HASTAG_ = make_uniq<PhysicalMergeSIPJoin>(join_HASTAG__op, move(scan_TAG_t1), move(join_HASCREATOR_),
+                                                        move(cond_HASTAG_),
+                                                        JoinType::INNER, left_projection_map,
+                                                        right_projection_map_HASTAG_, merge_project_map_HASTAG_,
+                                                        delim_types_HASTAG_, 0);
+
+
+    vector<idx_t> TAG_t2_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
+    vector<LogicalType> get_TAG_t2_types{LogicalType::BIGINT, LogicalType::VARCHAR};
+    string alias_TAG_t2 = "t2";
+    vector<LogicalType> table_types_TAG_t2;
+    vector<unique_ptr<Expression>> filter_TAG_t2;
+    unique_ptr<LogicalGet> get_op_TAG_t2 = move(
+            getLogicalGet(*this, table_TAG, alias_TAG_t2, table_index_TAG_t2, table_types_TAG_t2));
+    unique_ptr<TableFilterSet> table_filters_TAG_t2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_TAG_t2 = make_uniq<PhysicalTableScan>(get_TAG_t2_types, get_op_TAG_t2->function,
+                                                                             get_op_TAG_t2->table_index,
+                                                                             move(get_op_TAG_t2->bind_data),
+                                                                             table_types_TAG_t2, TAG_t2_ids,
+                                                                             move(filter_TAG_t2), vector<column_t>(),
+                                                                             get_op_TAG_t2->names,
+                                                                             std::move(table_filters_TAG_t2),
+                                                                             get_op_TAG_t2->estimated_cardinality,
+                                                                             get_op_TAG_t2->extra_info);
+
+
+    vector<JoinCondition> cond_TAG_t2;
+    JoinCondition join_condition_TAG_t2;
+    join_condition_TAG_t2.left = make_uniq<BoundReferenceExpression>("tag_rowid", LogicalType::BIGINT, 0);
+    join_condition_TAG_t2.right = make_uniq<BoundReferenceExpression>("post_rowid", LogicalType::BIGINT, 2);
+    join_condition_TAG_t2.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_TAG_t2 = make_uniq<RAIInfo>();
+    rai_info_TAG_t2->rai = table_HASTAG.GetStorage().info->rais[0].get();
+    rai_info_TAG_t2->rai_type = RAIType::TARGET_EDGE;
+    rai_info_TAG_t2->forward = true;
+    rai_info_TAG_t2->vertex = &table_TAG;
+    rai_info_TAG_t2->vertex_id = table_index_TAG_t2;
+    rai_info_TAG_t2->passing_tables[0] = table_index_TAG_t2;
+    rai_info_TAG_t2->left_cardinalities[0] = table_TAG.GetStorage().info->cardinality;
+    // rai_info_TAG_t2->compact_list = &rai_info_TAG_t2->rai->alist->compact__list;
+
+    join_condition_TAG_t2.rais.push_back(move(rai_info_TAG_t2));
+    cond_TAG_t2.push_back(move(join_condition_TAG_t2));
+
+    LogicalComparisonJoin join_TAG_t2_op(JoinType::INNER);
+    vector<LogicalType> output_TAG_t2_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    join_TAG_t2_op.types = output_TAG_t2_types;
+    vector<idx_t> right_projection_map_TAG_t2{0};
+    vector<idx_t> merge_project_map_TAG_t2;
+    vector<LogicalType> delim_types_TAG_t2;
+    auto join_TAG_t2 = make_uniq<PhysicalMergeSIPJoin>(join_TAG_t2_op, move(scan_TAG_t2), move(join_HASTAG_),
+                                                       move(cond_TAG_t2), JoinType::INNER,
+                                                       left_projection_map, right_projection_map_TAG_t2,
+                                                       merge_project_map_TAG_t2, delim_types_TAG_t2,
+                                                       0);
+
+    vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto tag_name_left = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto tag_name_right = make_uniq<BoundConstantExpression>(p_tag);
+    auto tag_name_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_NOTEQUAL,
+                                                                         move(tag_name_left),
+                                                                         move(tag_name_right));
+
+    select_list_filter.push_back(move(tag_name_expr));
+    unique_ptr<PhysicalFilter> filter_tag_name = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_tag_name->children.push_back(move(join_TAG_t2));
+
+
+    vector<LogicalType> result_types{LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("t_name", LogicalType::VARCHAR, 1);
+    select_list.push_back(move(result_col0));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_tag_name));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC91PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_COMMENT_c = "COMMENT";
+    string table_vertex_KNOWS_ = "KNOWS";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_COMMENT_c = 3;
+    idx_t table_index_KNOWS_ = 4;
+    idx_t table_index_HASCREATOR_ = 5;
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_COMMENT = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_COMMENT_c,
+                                                   OnEntryNotFound::RETURN_NULL);
+    auto &table_COMMENT = table_or_view_COMMENT->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types,
+                                                                                get_op_PERSON_p1->function,
+                                                                                get_op_PERSON_p1->table_index,
+                                                                                move(get_op_PERSON_p1->bind_data),
+                                                                                table_types_PERSON_p1, PERSON_p1_ids,
+                                                                                move(filter_PERSON_p1),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p1->names,
+                                                                                std::move(table_filters_PERSON_p1),
+                                                                                get_op_PERSON_p1->estimated_cardinality,
+                                                                                get_op_PERSON_p1->extra_info);
+
+
+    vector<idx_t> PERSON_p2_ids{1, 2, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types,
+                                                                                get_op_PERSON_p2->function,
+                                                                                get_op_PERSON_p2->table_index,
+                                                                                move(get_op_PERSON_p2->bind_data),
+                                                                                table_types_PERSON_p2, PERSON_p2_ids,
+                                                                                move(filter_PERSON_p2),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p2->names,
+                                                                                std::move(table_filters_PERSON_p2),
+                                                                                get_op_PERSON_p2->estimated_cardinality,
+                                                                                get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(scan_PERSON_p1), move(cond_KNOWS_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_,
+                                                       delim_types_KNOWS_, 0);
+
+    idx_t m_comment_date = atoll(paras->data()[1].c_str()); // 933;
+    Value comment_date = Value::BIGINT(m_comment_date);
+    vector<idx_t> COMMENT_c_ids{1, 10, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_COMMENT_c_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_COMMENT_c = "c";
+    vector<LogicalType> table_types_COMMENT_c;
+    vector<unique_ptr<Expression>> filter_COMMENT_c;
+    unique_ptr<LogicalGet> get_op_COMMENT_c = move(
+            getLogicalGet(*this, table_COMMENT, alias_COMMENT_c, table_index_COMMENT_c, table_types_COMMENT_c));
+    unique_ptr<TableFilterSet> table_filters_COMMENT_c = NULL;
+    unique_ptr<PhysicalTableScan> scan_COMMENT_c = make_uniq<PhysicalTableScan>(get_COMMENT_c_types,
+                                                                                get_op_COMMENT_c->function,
+                                                                                get_op_COMMENT_c->table_index,
+                                                                                move(get_op_COMMENT_c->bind_data),
+                                                                                table_types_COMMENT_c, COMMENT_c_ids,
+                                                                                move(filter_COMMENT_c),
+                                                                                vector<column_t>(),
+                                                                                get_op_COMMENT_c->names,
+                                                                                std::move(table_filters_COMMENT_c),
+                                                                                get_op_COMMENT_c->estimated_cardinality,
+                                                                                get_op_COMMENT_c->extra_info);
+
+
+    vector<JoinCondition> cond_HASCREATOR_;
+    JoinCondition join_condition_HASCREATOR_;
+    join_condition_HASCREATOR_.left = make_uniq<BoundReferenceExpression>("m_creatorid_rowid", LogicalType::BIGINT, 1);
+    join_condition_HASCREATOR_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
+    join_condition_HASCREATOR_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASCREATOR_ = make_uniq<RAIInfo>();
+    rai_info_HASCREATOR_->rai = table_COMMENT.GetStorage().info->rais[0].get();
+    rai_info_HASCREATOR_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_HASCREATOR_->forward = true;
+    rai_info_HASCREATOR_->vertex = &table_PERSON;
+    rai_info_HASCREATOR_->vertex_id = table_index_PERSON_p2;
+    rai_info_HASCREATOR_->passing_tables[0] = table_index_COMMENT_c;
+    rai_info_HASCREATOR_->left_cardinalities[0] = table_COMMENT.GetStorage().info->cardinality;
+    rai_info_HASCREATOR_->compact_list = &rai_info_HASCREATOR_->rai->alist->compact_forward_list;
+
+    join_condition_HASCREATOR_.rais.push_back(move(rai_info_HASCREATOR_));
+    cond_HASCREATOR_.push_back(move(join_condition_HASCREATOR_));
+
+    LogicalComparisonJoin join_HASCREATOR__op(JoinType::INNER);
+    vector<LogicalType> output_HASCREATOR__types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                 LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_HASCREATOR__op.types = output_HASCREATOR__types;
+    vector<idx_t> right_projection_map_HASCREATOR_{0, 1};
+    vector<idx_t> merge_project_map_HASCREATOR_;
+    vector<LogicalType> delim_types_HASCREATOR_;
+    auto join_HASCREATOR_ = make_uniq<PhysicalSIPJoin>(join_HASCREATOR__op, move(scan_COMMENT_c), move(join_KNOWS_), move(cond_HASCREATOR_),
+                                                            JoinType::INNER, left_projection_map,
+                                                            right_projection_map_HASCREATOR_,
+                                                            delim_types_HASCREATOR_, 0);
+
+
+    vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                     LogicalType::VARCHAR, LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto comment_date_right = make_uniq<BoundConstantExpression>(comment_date);
+    auto comment_create_date_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
+                                                                         move(creationDate_left),
+                                                                         move(comment_date_right));
+
+    select_list_filter.push_back(move(comment_create_date_expr));
+    unique_ptr<PhysicalFilter> filter_date = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_date->children.push_back(move(join_HASCREATOR_));
+
+
+    vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_date));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC92PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_COMMENT_c = "COMMENT";
+    string table_vertex_KNOWS_ = "KNOWS";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_PERSON_p3 = 6;
+    idx_t table_index_COMMENT_c = 3;
+    idx_t table_index_KNOWS_ = 4;
+    idx_t table_index_HASCREATOR_ = 5;
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_COMMENT = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_COMMENT_c,
+                                                   OnEntryNotFound::RETURN_NULL);
+    auto &table_COMMENT = table_or_view_COMMENT->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types,
+                                                                                get_op_PERSON_p1->function,
+                                                                                get_op_PERSON_p1->table_index,
+                                                                                move(get_op_PERSON_p1->bind_data),
+                                                                                table_types_PERSON_p1, PERSON_p1_ids,
+                                                                                move(filter_PERSON_p1),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p1->names,
+                                                                                std::move(table_filters_PERSON_p1),
+                                                                                get_op_PERSON_p1->estimated_cardinality,
+                                                                                get_op_PERSON_p1->extra_info);
+
+    vector<idx_t> PERSON_p3_ids{COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p3_types{LogicalType::BIGINT};
+    string alias_PERSON_p3 = "p3";
+    vector<LogicalType> table_types_PERSON_p3;
+    vector<unique_ptr<Expression>> filter_PERSON_p3;
+    unique_ptr<LogicalGet> get_op_PERSON_p3 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p3, table_index_PERSON_p3, table_types_PERSON_p3));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p3 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p3 = make_uniq<PhysicalTableScan>(get_PERSON_p3_types,
+                                                                                get_op_PERSON_p3->function,
+                                                                                get_op_PERSON_p3->table_index,
+                                                                                move(get_op_PERSON_p3->bind_data),
+                                                                                table_types_PERSON_p3, PERSON_p3_ids,
+                                                                                move(filter_PERSON_p3),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p3->names,
+                                                                                std::move(table_filters_PERSON_p3),
+                                                                                get_op_PERSON_p3->estimated_cardinality,
+                                                                                get_op_PERSON_p3->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_k2;
+    JoinCondition join_condition_KNOWS_k2;
+    join_condition_KNOWS_k2.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_k2.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_k2.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_k2 = make_uniq<RAIInfo>();
+    rai_info_KNOWS_k2->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_k2->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_k2->forward = true;
+    rai_info_KNOWS_k2->vertex = &table_PERSON;
+    rai_info_KNOWS_k2->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_k2->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_k2->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_k2.rais.push_back(move(rai_info_KNOWS_k2));
+    cond_KNOWS_k2.push_back(move(join_condition_KNOWS_k2));
+
+    LogicalComparisonJoin join_KNOWS_k2_op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS_k2_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS_k2_op.types = output_KNOWS_k2_types;
+    vector<idx_t> right_projection_map_KNOWS_k2{1};
+    vector<idx_t> merge_project_map_KNOWS_k2;
+    vector<LogicalType> delim_types_KNOWS_k2;
+    auto join_KNOWS_k2 = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS_k2_op, move(scan_PERSON_p3), move(scan_PERSON_p1), move(cond_KNOWS_k2),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_k2, merge_project_map_KNOWS_k2,
+                                                       delim_types_KNOWS_k2, 0);
+
+    vector<idx_t> PERSON_p2_ids{1, 2, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types,
+                                                                                get_op_PERSON_p2->function,
+                                                                                get_op_PERSON_p2->table_index,
+                                                                                move(get_op_PERSON_p2->bind_data),
+                                                                                table_types_PERSON_p2, PERSON_p2_ids,
+                                                                                move(filter_PERSON_p2),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p2->names,
+                                                                                std::move(table_filters_PERSON_p2),
+                                                                                get_op_PERSON_p2->estimated_cardinality,
+                                                                                get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(join_KNOWS_k2), move(cond_KNOWS_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_,
+                                                       delim_types_KNOWS_, 0);
+
+    idx_t m_comment_date = atoll(paras->data()[1].c_str()); // 933;
+    Value comment_date = Value::BIGINT(m_comment_date);
+    vector<idx_t> COMMENT_c_ids{1, 10, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_COMMENT_c_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_COMMENT_c = "c";
+    vector<LogicalType> table_types_COMMENT_c;
+    vector<unique_ptr<Expression>> filter_COMMENT_c;
+    unique_ptr<LogicalGet> get_op_COMMENT_c = move(
+            getLogicalGet(*this, table_COMMENT, alias_COMMENT_c, table_index_COMMENT_c, table_types_COMMENT_c));
+    unique_ptr<TableFilterSet> table_filters_COMMENT_c = NULL;
+    unique_ptr<PhysicalTableScan> scan_COMMENT_c = make_uniq<PhysicalTableScan>(get_COMMENT_c_types,
+                                                                                get_op_COMMENT_c->function,
+                                                                                get_op_COMMENT_c->table_index,
+                                                                                move(get_op_COMMENT_c->bind_data),
+                                                                                table_types_COMMENT_c, COMMENT_c_ids,
+                                                                                move(filter_COMMENT_c),
+                                                                                vector<column_t>(),
+                                                                                get_op_COMMENT_c->names,
+                                                                                std::move(table_filters_COMMENT_c),
+                                                                                get_op_COMMENT_c->estimated_cardinality,
+                                                                                get_op_COMMENT_c->extra_info);
+
+
+    vector<JoinCondition> cond_HASCREATOR_;
+    JoinCondition join_condition_HASCREATOR_;
+    join_condition_HASCREATOR_.left = make_uniq<BoundReferenceExpression>("m_creatorid_rowid", LogicalType::BIGINT, 1);
+    join_condition_HASCREATOR_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 2);
+    join_condition_HASCREATOR_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_HASCREATOR_ = make_uniq<RAIInfo>();
+    rai_info_HASCREATOR_->rai = table_COMMENT.GetStorage().info->rais[0].get();
+    rai_info_HASCREATOR_->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_HASCREATOR_->forward = true;
+    rai_info_HASCREATOR_->vertex = &table_PERSON;
+    rai_info_HASCREATOR_->vertex_id = table_index_PERSON_p2;
+    rai_info_HASCREATOR_->passing_tables[0] = table_index_COMMENT_c;
+    rai_info_HASCREATOR_->left_cardinalities[0] = table_COMMENT.GetStorage().info->cardinality;
+    rai_info_HASCREATOR_->compact_list = &rai_info_HASCREATOR_->rai->alist->compact_forward_list;
+
+    join_condition_HASCREATOR_.rais.push_back(move(rai_info_HASCREATOR_));
+    cond_HASCREATOR_.push_back(move(join_condition_HASCREATOR_));
+
+    LogicalComparisonJoin join_HASCREATOR__op(JoinType::INNER);
+    vector<LogicalType> output_HASCREATOR__types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                 LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_HASCREATOR__op.types = output_HASCREATOR__types;
+    vector<idx_t> right_projection_map_HASCREATOR_{0, 1};
+    vector<idx_t> merge_project_map_HASCREATOR_;
+    vector<LogicalType> delim_types_HASCREATOR_;
+    auto join_HASCREATOR_ = make_uniq<PhysicalSIPJoin>(join_HASCREATOR__op, move(scan_COMMENT_c), move(join_KNOWS_), move(cond_HASCREATOR_),
+                                                       JoinType::INNER, left_projection_map,
+                                                       right_projection_map_HASCREATOR_,
+                                                       delim_types_HASCREATOR_, 0);
+
+    vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+                                     LogicalType::VARCHAR, LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto comment_date_right = make_uniq<BoundConstantExpression>(comment_date);
+    auto comment_create_date_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
+                                                                         move(creationDate_left),
+                                                                         move(comment_date_right));
+
+    select_list_filter.push_back(move(comment_create_date_expr));
+    unique_ptr<PhysicalFilter> filter_date = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_date->children.push_back(move(join_HASCREATOR_));
+
+    vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_date));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC111PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_ORGANISATION_o = "ORGANISATION";
+    string table_vertex_PLACE_pl = "PLACE";
+    string table_vertex_KNOWS_ = "KNOWS";
+    string table_vertex_WORKAT_pc = "PERSON_COMPANY";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_ORGANISATION_o = 3;
+    idx_t table_index_PLACE_pl = 4;
+    idx_t table_index_KNOWS_ = 5;
+    idx_t table_index_WORKAT_pc = 6;
+
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1, OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_ORGANISATION = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_ORGANISATION_o, OnEntryNotFound::RETURN_NULL);
+    auto &table_ORGANISATION = table_or_view_ORGANISATION->Cast<TableCatalogEntry>();
+    auto table_or_view_PLACE = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PLACE_pl, OnEntryNotFound::RETURN_NULL);
+    auto &table_PLACE = table_or_view_PLACE->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_, OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+    auto table_or_view_WORKAT = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_WORKAT_pc, OnEntryNotFound::RETURN_NULL);
+    auto &table_WORKAT = table_or_view_WORKAT->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types, get_op_PERSON_p1->function, get_op_PERSON_p1->table_index, move(get_op_PERSON_p1->bind_data), table_types_PERSON_p1, PERSON_p1_ids, move(filter_PERSON_p1), vector<column_t>(), get_op_PERSON_p1->names, std::move(table_filters_PERSON_p1), get_op_PERSON_p1->estimated_cardinality, get_op_PERSON_p1->extra_info);
+
+
+    vector<idx_t> PERSON_p2_ids{0, 1, 2, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types, get_op_PERSON_p2->function, get_op_PERSON_p2->table_index, move(get_op_PERSON_p2->bind_data), table_types_PERSON_p2, PERSON_p2_ids, move(filter_PERSON_p2), vector<column_t>(), get_op_PERSON_p2->names, std::move(table_filters_PERSON_p2), get_op_PERSON_p2->estimated_cardinality, get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(scan_PERSON_p1),
+                                                       move(cond_KNOWS_), JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_, delim_types_KNOWS_, 0);
+
+
+    idx_t work_from_id = atoi(paras->data()[2].c_str()); // 933;
+    Value work_from = Value::INTEGER(work_from_id);
+    vector<idx_t> WORKAT_pc_ids{2, 3, 4};
+    vector<LogicalType> get_WORKAT_pc_types{LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_WORKAT_pc = "pc";
+    vector<LogicalType> table_types_WORKAT_pc;
+    vector<unique_ptr<Expression>> filter_WORKAT_pc;
+    unique_ptr<LogicalGet> get_op_WORKAT_pc = move(getLogicalGet(*this, table_WORKAT, alias_WORKAT_pc, table_index_WORKAT_pc, table_types_WORKAT_pc));
+    unique_ptr<TableFilterSet> table_filters_WORKAT_pc = NULL;
+    unique_ptr<PhysicalTableScan> scan_WORKAT_pc = make_uniq<PhysicalTableScan>(get_WORKAT_pc_types, get_op_WORKAT_pc->function, get_op_WORKAT_pc->table_index, move(get_op_WORKAT_pc->bind_data), table_types_WORKAT_pc, WORKAT_pc_ids, move(filter_WORKAT_pc), vector<column_t>(), get_op_WORKAT_pc->names, std::move(table_filters_WORKAT_pc), get_op_WORKAT_pc->estimated_cardinality, get_op_WORKAT_pc->extra_info);
+
+    vector<JoinCondition> cond_WORKAT_pc;
+    JoinCondition join_condition_WORKAT_pc;
+    join_condition_WORKAT_pc.left = make_uniq<BoundReferenceExpression>("pc_personid_rowid", LogicalType::BIGINT, 1);
+    join_condition_WORKAT_pc.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
+    join_condition_WORKAT_pc.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_WORKAT_pc = make_uniq<RAIInfo>();
+    rai_info_WORKAT_pc->rai = table_WORKAT.GetStorage().info->rais[0].get();
+    rai_info_WORKAT_pc->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_WORKAT_pc->forward = true;
+    rai_info_WORKAT_pc->vertex = &table_PERSON;
+    rai_info_WORKAT_pc->vertex_id = table_index_PERSON_p2;
+    rai_info_WORKAT_pc->passing_tables[0] = table_index_WORKAT_pc;
+    rai_info_WORKAT_pc->left_cardinalities[0] = table_WORKAT.GetStorage().info->cardinality;
+    rai_info_WORKAT_pc->compact_list = &rai_info_WORKAT_pc->rai->alist->compact_forward_list;
+
+    join_condition_WORKAT_pc.rais.push_back(move(rai_info_WORKAT_pc));
+    cond_WORKAT_pc.push_back(move(join_condition_WORKAT_pc));
+
+    LogicalComparisonJoin join_WORKAT_pc_op(JoinType::INNER);
+    vector<LogicalType> output_WORKAT_pc_types{LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT,
+                                               LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_WORKAT_pc_op.types = output_WORKAT_pc_types;
+    vector<idx_t> right_projection_map_WORKAT_pc{0, 1, 2};
+    vector<idx_t> merge_project_map_WORKAT_pc;
+    vector<LogicalType> delim_types_WORKAT_pc;
+    auto join_WORKAT_pc = make_uniq<PhysicalSIPJoin>(join_WORKAT_pc_op, move(scan_WORKAT_pc), move(join_KNOWS_), move(cond_WORKAT_pc), JoinType::INNER, left_projection_map, right_projection_map_WORKAT_pc, delim_types_WORKAT_pc, 0);
+
+    vector<idx_t> ORGANISATION_o_ids{2, 5, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_ORGANISATION_o_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_ORGANISATION_o = "o";
+    vector<LogicalType> table_types_ORGANISATION_o;
+    vector<unique_ptr<Expression>> filter_ORGANISATION_o;
+    unique_ptr<LogicalGet> get_op_ORGANISATION_o = move(getLogicalGet(*this, table_ORGANISATION, alias_ORGANISATION_o, table_index_ORGANISATION_o, table_types_ORGANISATION_o));
+    unique_ptr<TableFilterSet> table_filters_ORGANISATION_o = NULL;
+    unique_ptr<PhysicalTableScan> scan_ORGANISATION_o = make_uniq<PhysicalTableScan>(get_ORGANISATION_o_types, get_op_ORGANISATION_o->function, get_op_ORGANISATION_o->table_index, move(get_op_ORGANISATION_o->bind_data), table_types_ORGANISATION_o, ORGANISATION_o_ids, move(filter_ORGANISATION_o), vector<column_t>(), get_op_ORGANISATION_o->names, std::move(table_filters_ORGANISATION_o), get_op_ORGANISATION_o->estimated_cardinality, get_op_ORGANISATION_o->extra_info);
+
+    vector<JoinCondition> cond_ORGANISATION_o;
+    JoinCondition join_condition_ORGANISATION_o;
+    join_condition_ORGANISATION_o.left = make_uniq<BoundReferenceExpression>("organisation_rowid", LogicalType::BIGINT, 2);
+    join_condition_ORGANISATION_o.right = make_uniq<BoundReferenceExpression>("pc_organisationid_rowid", LogicalType::BIGINT, 2);
+    join_condition_ORGANISATION_o.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_ORGANISATION_o = make_uniq<RAIInfo>();
+    rai_info_ORGANISATION_o->rai = table_WORKAT.GetStorage().info->rais[0].get();
+    rai_info_ORGANISATION_o->rai_type = RAIType::TARGET_EDGE;
+    rai_info_ORGANISATION_o->forward = true;
+    rai_info_ORGANISATION_o->vertex = &table_ORGANISATION;
+    rai_info_ORGANISATION_o->vertex_id = table_index_ORGANISATION_o;
+    rai_info_ORGANISATION_o->passing_tables[0] = table_index_ORGANISATION_o;
+    rai_info_ORGANISATION_o->left_cardinalities[0] = table_ORGANISATION.GetStorage().info->cardinality;
+    // rai_info_ORGANISATION_o->compact_list = &rai_info_ORGANISATION_o->rai->alist->compact__list;
+
+    join_condition_ORGANISATION_o.rais.push_back(move(rai_info_ORGANISATION_o));
+    cond_ORGANISATION_o.push_back(move(join_condition_ORGANISATION_o));
+
+    LogicalComparisonJoin join_ORGANISATION_o_op(JoinType::INNER);
+    vector<LogicalType> output_ORGANISATION_o_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                    LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                    LogicalType::VARCHAR};
+    join_ORGANISATION_o_op.types = output_ORGANISATION_o_types;
+    vector<idx_t> right_projection_map_ORGANISATION_o{0, 3, 4, 5};
+    vector<idx_t> merge_project_map_ORGANISATION_o;
+    vector<LogicalType> delim_types_ORGANISATION_o;
+    auto join_ORGANISATION_o = make_uniq<PhysicalSIPJoin>(join_ORGANISATION_o_op, move(scan_ORGANISATION_o), move(join_WORKAT_pc),
+                                                          move(cond_ORGANISATION_o), JoinType::INNER, left_projection_map,
+                                                          right_projection_map_ORGANISATION_o, delim_types_ORGANISATION_o, 0);
+
+    string p_place_name = paras->data()[1]; // 933;
+    Value p_place = Value(p_place_name);
+    vector<idx_t> PLACE_pl_ids{1, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PLACE_pl_types{LogicalType::VARCHAR, LogicalType::BIGINT};
+    string alias_PLACE_pl = "pl";
+    vector<LogicalType> table_types_PLACE_pl;
+    vector<unique_ptr<Expression>> filter_PLACE_pl;
+    unique_ptr<LogicalGet> get_op_PLACE_pl = move(getLogicalGet(*this, table_PLACE, alias_PLACE_pl, table_index_PLACE_pl, table_types_PLACE_pl));
+    unique_ptr<TableFilterSet> table_filters_PLACE_pl = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_PLACE = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                          p_place);
+    table_filters_PLACE_pl->filters[0] = move(constant_filter_PLACE);
+    unique_ptr<PhysicalTableScan> scan_PLACE_pl = make_uniq<PhysicalTableScan>(get_PLACE_pl_types, get_op_PLACE_pl->function, get_op_PLACE_pl->table_index, move(get_op_PLACE_pl->bind_data), table_types_PLACE_pl, PLACE_pl_ids, move(filter_PLACE_pl), vector<column_t>(), get_op_PLACE_pl->names, std::move(table_filters_PLACE_pl), get_op_PLACE_pl->estimated_cardinality, get_op_PLACE_pl->extra_info);
+
+
+    vector<JoinCondition> cond_ISLOCATEDIN_;
+    JoinCondition join_condition_ISLOCATEDIN_;
+    join_condition_ISLOCATEDIN_.left = make_uniq<BoundReferenceExpression>("place_rowid", LogicalType::BIGINT, 1);
+    join_condition_ISLOCATEDIN_.right = make_uniq<BoundReferenceExpression>("o_placeid_rowid", LogicalType::BIGINT, 1);
+    join_condition_ISLOCATEDIN_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_ISLOCATEDIN_ = make_uniq<RAIInfo>();
+    rai_info_ISLOCATEDIN_->rai = table_ORGANISATION.GetStorage().info->rais[0].get();
+    rai_info_ISLOCATEDIN_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_ISLOCATEDIN_->forward = true;
+    rai_info_ISLOCATEDIN_->vertex = &table_PLACE;
+    rai_info_ISLOCATEDIN_->vertex_id = table_index_PLACE_pl;
+    rai_info_ISLOCATEDIN_->passing_tables[0] = table_index_PLACE_pl;
+    rai_info_ISLOCATEDIN_->left_cardinalities[0] = table_PLACE.GetStorage().info->cardinality;
+    // rai_info_ISLOCATEDIN_->compact_list = &rai_info_ISLOCATEDIN_->rai->alist->compact__list;
+
+    join_condition_ISLOCATEDIN_.rais.push_back(move(rai_info_ISLOCATEDIN_));
+    cond_ISLOCATEDIN_.push_back(move(join_condition_ISLOCATEDIN_));
+
+    LogicalComparisonJoin join_ISLOCATEDIN__op(JoinType::INNER);
+    vector<LogicalType> output_ISLOCATEDIN__types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                  LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                  LogicalType::VARCHAR};
+    join_ISLOCATEDIN__op.types = output_ISLOCATEDIN__types;
+    vector<idx_t> right_projection_map_ISLOCATEDIN_{0, 3, 4, 5, 6};
+    vector<idx_t> merge_project_map_ISLOCATEDIN_;
+    vector<LogicalType> delim_types_ISLOCATEDIN_;
+    auto join_ISLOCATEDIN_ = make_uniq<PhysicalSIPJoin>(join_ISLOCATEDIN__op, move(scan_PLACE_pl), move(join_ORGANISATION_o), move(cond_ISLOCATEDIN_), JoinType::INNER, left_projection_map, right_projection_map_ISLOCATEDIN_, delim_types_ISLOCATEDIN_, 0);
+
+
+    vector<LogicalType> filter_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                     LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                     LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto workfrom_left = make_uniq<BoundReferenceExpression>("pc_workfrom", LogicalType::INTEGER, 3);
+    auto workfrom_right = make_uniq<BoundConstantExpression>(work_from);
+    auto work_from_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
+                                                                         move(workfrom_left),
+                                                                         move(workfrom_right));
+
+    select_list_filter.push_back(move(work_from_expr));
+    unique_ptr<PhysicalFilter> filter_work_from = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_work_from->children.push_back(move(join_ISLOCATEDIN_));
+
+    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                     LogicalType::VARCHAR, LogicalType::INTEGER};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 4);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 5);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("p_lastname", LogicalType::VARCHAR, 6);
+    auto result_col3 = make_uniq<BoundReferenceExpression>("o_name", LogicalType::VARCHAR, 2);
+    auto result_col4 = make_uniq<BoundReferenceExpression>("pc_workfrom", LogicalType::INTEGER, 3);
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    select_list.push_back(move(result_col3));
+    select_list.push_back(move(result_col4));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_work_from));
+
+    return projection;
+}
+
+unique_ptr<PhysicalOperator> ClientContext::GenerateIC112PlanPPFilter() {
+    vector<idx_t> left_projection_map, right_projection_map;
+
+    string table_vertex_PERSON_p1 = "PERSON";
+    string table_vertex_PERSON_p2 = "PERSON";
+    string table_vertex_PERSON_p3 = "PERSON";
+    string table_vertex_ORGANISATION_o = "ORGANISATION";
+    string table_vertex_PLACE_pl = "PLACE";
+    string table_vertex_KNOWS_ = "KNOWS";
+    string table_vertex_WORKAT_pc = "PERSON_COMPANY";
+
+    idx_t table_index_PERSON_p1 = 1;
+    idx_t table_index_PERSON_p2 = 2;
+    idx_t table_index_PERSON_p3 = 7;
+    idx_t table_index_ORGANISATION_o = 3;
+    idx_t table_index_PLACE_pl = 4;
+    idx_t table_index_KNOWS_ = 5;
+    idx_t table_index_WORKAT_pc = 6;
+
+    auto table_or_view_PERSON = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PERSON_p1,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_PERSON = table_or_view_PERSON->Cast<TableCatalogEntry>();
+    auto table_or_view_ORGANISATION = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "",
+                                                        table_vertex_ORGANISATION_o, OnEntryNotFound::RETURN_NULL);
+    auto &table_ORGANISATION = table_or_view_ORGANISATION->Cast<TableCatalogEntry>();
+    auto table_or_view_PLACE = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_PLACE_pl,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_PLACE = table_or_view_PLACE->Cast<TableCatalogEntry>();
+    auto table_or_view_KNOWS = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_KNOWS_,
+                                                 OnEntryNotFound::RETURN_NULL);
+    auto &table_KNOWS = table_or_view_KNOWS->Cast<TableCatalogEntry>();
+    auto table_or_view_WORKAT = Catalog::GetEntry(*this, CatalogType::TABLE_ENTRY, "", "", table_vertex_WORKAT_pc,
+                                                  OnEntryNotFound::RETURN_NULL);
+    auto &table_WORKAT = table_or_view_WORKAT->Cast<TableCatalogEntry>();
+
+    idx_t p_person_id = atoll(paras->data()[0].c_str()); // 933;
+    Value p_person = Value::BIGINT(p_person_id);
+    vector<idx_t> PERSON_p1_ids{0, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p1_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_PERSON_p1 = "p1";
+    vector<LogicalType> table_types_PERSON_p1;
+    vector<unique_ptr<Expression>> filter_PERSON_p1;
+    unique_ptr<LogicalGet> get_op_PERSON_p1 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p1, table_index_PERSON_p1, table_types_PERSON_p1));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p1 = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                   p_person);
+    table_filters_PERSON_p1->filters[0] = move(constant_filter);
+    unique_ptr<PhysicalTableScan> scan_PERSON_p1 = make_uniq<PhysicalTableScan>(get_PERSON_p1_types,
+                                                                                get_op_PERSON_p1->function,
+                                                                                get_op_PERSON_p1->table_index,
+                                                                                move(get_op_PERSON_p1->bind_data),
+                                                                                table_types_PERSON_p1, PERSON_p1_ids,
+                                                                                move(filter_PERSON_p1),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p1->names,
+                                                                                std::move(table_filters_PERSON_p1),
+                                                                                get_op_PERSON_p1->estimated_cardinality,
+                                                                                get_op_PERSON_p1->extra_info);
+
+
+    vector<idx_t> PERSON_p3_ids{COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p3_types{LogicalType::BIGINT};
+    string alias_PERSON_p3 = "p3";
+    vector<LogicalType> table_types_PERSON_p3;
+    vector<unique_ptr<Expression>> filter_PERSON_p3;
+    unique_ptr<LogicalGet> get_op_PERSON_p3 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p3, table_index_PERSON_p3, table_types_PERSON_p3));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p3 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p3 = make_uniq<PhysicalTableScan>(get_PERSON_p3_types,
+                                                                                get_op_PERSON_p3->function,
+                                                                                get_op_PERSON_p3->table_index,
+                                                                                move(get_op_PERSON_p3->bind_data),
+                                                                                table_types_PERSON_p3, PERSON_p3_ids,
+                                                                                move(filter_PERSON_p3),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p3->names,
+                                                                                std::move(table_filters_PERSON_p3),
+                                                                                get_op_PERSON_p3->estimated_cardinality,
+                                                                                get_op_PERSON_p3->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_k2;
+    JoinCondition join_condition_KNOWS_k2;
+    join_condition_KNOWS_k2.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_k2.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 1);
+    join_condition_KNOWS_k2.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_k2 = make_uniq<RAIInfo>();
+    rai_info_KNOWS_k2->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_k2->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_k2->forward = true;
+    rai_info_KNOWS_k2->vertex = &table_PERSON;
+    rai_info_KNOWS_k2->vertex_id = table_index_PERSON_p3;
+    rai_info_KNOWS_k2->passing_tables[0] = table_index_PERSON_p3;
+    rai_info_KNOWS_k2->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_k2.rais.push_back(move(rai_info_KNOWS_k2));
+    cond_KNOWS_k2.push_back(move(join_condition_KNOWS_k2));
+
+    LogicalComparisonJoin join_KNOWS_k2_op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS_k2_types{LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS_k2_op.types = output_KNOWS_k2_types;
+    vector<idx_t> right_projection_map_KNOWS_k2{1};
+    vector<idx_t> merge_project_map_KNOWS_k2;
+    vector<LogicalType> delim_types_KNOWS_k2;
+    auto join_KNOWS_k2 = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS_k2_op, move(scan_PERSON_p3), move(scan_PERSON_p1),
+                                                       move(cond_KNOWS_k2), JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_k2, merge_project_map_KNOWS_k2,
+                                                       delim_types_KNOWS_k2, 0);
+
+
+    vector<idx_t> PERSON_p2_ids{0, 1, 2, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PERSON_p2_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT};
+    string alias_PERSON_p2 = "p2";
+    vector<LogicalType> table_types_PERSON_p2;
+    vector<unique_ptr<Expression>> filter_PERSON_p2;
+    unique_ptr<LogicalGet> get_op_PERSON_p2 = move(
+            getLogicalGet(*this, table_PERSON, alias_PERSON_p2, table_index_PERSON_p2, table_types_PERSON_p2));
+    unique_ptr<TableFilterSet> table_filters_PERSON_p2 = NULL;
+    unique_ptr<PhysicalTableScan> scan_PERSON_p2 = make_uniq<PhysicalTableScan>(get_PERSON_p2_types,
+                                                                                get_op_PERSON_p2->function,
+                                                                                get_op_PERSON_p2->table_index,
+                                                                                move(get_op_PERSON_p2->bind_data),
+                                                                                table_types_PERSON_p2, PERSON_p2_ids,
+                                                                                move(filter_PERSON_p2),
+                                                                                vector<column_t>(),
+                                                                                get_op_PERSON_p2->names,
+                                                                                std::move(table_filters_PERSON_p2),
+                                                                                get_op_PERSON_p2->estimated_cardinality,
+                                                                                get_op_PERSON_p2->extra_info);
+
+
+    vector<JoinCondition> cond_KNOWS_;
+    JoinCondition join_condition_KNOWS_;
+    join_condition_KNOWS_.left = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
+    join_condition_KNOWS_.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 0);
+    join_condition_KNOWS_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_KNOWS_ = make_uniq<RAIInfo>();
+    rai_info_KNOWS_->rai = table_KNOWS.GetStorage().info->rais[0].get();
+    rai_info_KNOWS_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_KNOWS_->forward = true;
+    rai_info_KNOWS_->vertex = &table_PERSON;
+    rai_info_KNOWS_->vertex_id = table_index_PERSON_p2;
+    rai_info_KNOWS_->passing_tables[0] = table_index_PERSON_p2;
+    rai_info_KNOWS_->left_cardinalities[0] = table_PERSON.GetStorage().info->cardinality;
+    // rai_info_KNOWS_->compact_list = &rai_info_KNOWS_->rai->alist->compact__list;
+
+    join_condition_KNOWS_.rais.push_back(move(rai_info_KNOWS_));
+    cond_KNOWS_.push_back(move(join_condition_KNOWS_));
+
+    LogicalComparisonJoin join_KNOWS__op(JoinType::INNER);
+    vector<LogicalType> output_KNOWS__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                            LogicalType::BIGINT, LogicalType::BIGINT};
+    join_KNOWS__op.types = output_KNOWS__types;
+    vector<idx_t> right_projection_map_KNOWS_{1};
+    vector<idx_t> merge_project_map_KNOWS_;
+    vector<LogicalType> delim_types_KNOWS_;
+    auto join_KNOWS_ = make_uniq<PhysicalMergeSIPJoin>(join_KNOWS__op, move(scan_PERSON_p2), move(join_KNOWS_k2),
+                                                       move(cond_KNOWS_), JoinType::INNER, left_projection_map,
+                                                       right_projection_map_KNOWS_, merge_project_map_KNOWS_,
+                                                       delim_types_KNOWS_, 0);
+
+
+    idx_t work_from_id = atoi(paras->data()[2].c_str()); // 933;
+    Value work_from = Value::INTEGER(work_from_id);
+    vector<idx_t> WORKAT_pc_ids{2, 3, 4};
+    vector<LogicalType> get_WORKAT_pc_types{LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_WORKAT_pc = "pc";
+    vector<LogicalType> table_types_WORKAT_pc;
+    vector<unique_ptr<Expression>> filter_WORKAT_pc;
+    unique_ptr<LogicalGet> get_op_WORKAT_pc = move(
+            getLogicalGet(*this, table_WORKAT, alias_WORKAT_pc, table_index_WORKAT_pc, table_types_WORKAT_pc));
+    unique_ptr<TableFilterSet> table_filters_WORKAT_pc = NULL;
+    unique_ptr<PhysicalTableScan> scan_WORKAT_pc = make_uniq<PhysicalTableScan>(get_WORKAT_pc_types,
+                                                                                get_op_WORKAT_pc->function,
+                                                                                get_op_WORKAT_pc->table_index,
+                                                                                move(get_op_WORKAT_pc->bind_data),
+                                                                                table_types_WORKAT_pc, WORKAT_pc_ids,
+                                                                                move(filter_WORKAT_pc),
+                                                                                vector<column_t>(),
+                                                                                get_op_WORKAT_pc->names,
+                                                                                std::move(table_filters_WORKAT_pc),
+                                                                                get_op_WORKAT_pc->estimated_cardinality,
+                                                                                get_op_WORKAT_pc->extra_info);
+
+    vector<JoinCondition> cond_WORKAT_pc;
+    JoinCondition join_condition_WORKAT_pc;
+    join_condition_WORKAT_pc.left = make_uniq<BoundReferenceExpression>("pc_personid_rowid", LogicalType::BIGINT, 1);
+    join_condition_WORKAT_pc.right = make_uniq<BoundReferenceExpression>("person_rowid", LogicalType::BIGINT, 3);
+    join_condition_WORKAT_pc.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_WORKAT_pc = make_uniq<RAIInfo>();
+    rai_info_WORKAT_pc->rai = table_WORKAT.GetStorage().info->rais[0].get();
+    rai_info_WORKAT_pc->rai_type = RAIType::EDGE_SOURCE;
+    rai_info_WORKAT_pc->forward = true;
+    rai_info_WORKAT_pc->vertex = &table_PERSON;
+    rai_info_WORKAT_pc->vertex_id = table_index_PERSON_p2;
+    rai_info_WORKAT_pc->passing_tables[0] = table_index_WORKAT_pc;
+    rai_info_WORKAT_pc->left_cardinalities[0] = table_WORKAT.GetStorage().info->cardinality;
+    rai_info_WORKAT_pc->compact_list = &rai_info_WORKAT_pc->rai->alist->compact_forward_list;
+
+    join_condition_WORKAT_pc.rais.push_back(move(rai_info_WORKAT_pc));
+    cond_WORKAT_pc.push_back(move(join_condition_WORKAT_pc));
+
+    LogicalComparisonJoin join_WORKAT_pc_op(JoinType::INNER);
+    vector<LogicalType> output_WORKAT_pc_types{LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT,
+                                               LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
+    join_WORKAT_pc_op.types = output_WORKAT_pc_types;
+    vector<idx_t> right_projection_map_WORKAT_pc{0, 1, 2};
+    vector<idx_t> merge_project_map_WORKAT_pc;
+    vector<LogicalType> delim_types_WORKAT_pc;
+    auto join_WORKAT_pc = make_uniq<PhysicalSIPJoin>(join_WORKAT_pc_op, move(scan_WORKAT_pc), move(join_KNOWS_),
+                                                     move(cond_WORKAT_pc), JoinType::INNER, left_projection_map,
+                                                     right_projection_map_WORKAT_pc, delim_types_WORKAT_pc, 0);
+
+    vector<idx_t> ORGANISATION_o_ids{2, 5, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_ORGANISATION_o_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT};
+    string alias_ORGANISATION_o = "o";
+    vector<LogicalType> table_types_ORGANISATION_o;
+    vector<unique_ptr<Expression>> filter_ORGANISATION_o;
+    unique_ptr<LogicalGet> get_op_ORGANISATION_o = move(
+            getLogicalGet(*this, table_ORGANISATION, alias_ORGANISATION_o, table_index_ORGANISATION_o,
+                          table_types_ORGANISATION_o));
+    unique_ptr<TableFilterSet> table_filters_ORGANISATION_o = NULL;
+    unique_ptr<PhysicalTableScan> scan_ORGANISATION_o = make_uniq<PhysicalTableScan>(get_ORGANISATION_o_types,
+                                                                                     get_op_ORGANISATION_o->function,
+                                                                                     get_op_ORGANISATION_o->table_index,
+                                                                                     move(get_op_ORGANISATION_o->bind_data),
+                                                                                     table_types_ORGANISATION_o,
+                                                                                     ORGANISATION_o_ids,
+                                                                                     move(filter_ORGANISATION_o),
+                                                                                     vector<column_t>(),
+                                                                                     get_op_ORGANISATION_o->names,
+                                                                                     std::move(
+                                                                                             table_filters_ORGANISATION_o),
+                                                                                     get_op_ORGANISATION_o->estimated_cardinality,
+                                                                                     get_op_ORGANISATION_o->extra_info);
+
+    vector<JoinCondition> cond_ORGANISATION_o;
+    JoinCondition join_condition_ORGANISATION_o;
+    join_condition_ORGANISATION_o.left = make_uniq<BoundReferenceExpression>("organisation_rowid", LogicalType::BIGINT,
+                                                                             2);
+    join_condition_ORGANISATION_o.right = make_uniq<BoundReferenceExpression>("pc_organisationid_rowid",
+                                                                              LogicalType::BIGINT, 2);
+    join_condition_ORGANISATION_o.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_ORGANISATION_o = make_uniq<RAIInfo>();
+    rai_info_ORGANISATION_o->rai = table_WORKAT.GetStorage().info->rais[0].get();
+    rai_info_ORGANISATION_o->rai_type = RAIType::TARGET_EDGE;
+    rai_info_ORGANISATION_o->forward = true;
+    rai_info_ORGANISATION_o->vertex = &table_ORGANISATION;
+    rai_info_ORGANISATION_o->vertex_id = table_index_ORGANISATION_o;
+    rai_info_ORGANISATION_o->passing_tables[0] = table_index_ORGANISATION_o;
+    rai_info_ORGANISATION_o->left_cardinalities[0] = table_ORGANISATION.GetStorage().info->cardinality;
+    // rai_info_ORGANISATION_o->compact_list = &rai_info_ORGANISATION_o->rai->alist->compact__list;
+
+    join_condition_ORGANISATION_o.rais.push_back(move(rai_info_ORGANISATION_o));
+    cond_ORGANISATION_o.push_back(move(join_condition_ORGANISATION_o));
+
+    LogicalComparisonJoin join_ORGANISATION_o_op(JoinType::INNER);
+    vector<LogicalType> output_ORGANISATION_o_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                    LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                    LogicalType::VARCHAR};
+    join_ORGANISATION_o_op.types = output_ORGANISATION_o_types;
+    vector<idx_t> right_projection_map_ORGANISATION_o{0, 3, 4, 5};
+    vector<idx_t> merge_project_map_ORGANISATION_o;
+    vector<LogicalType> delim_types_ORGANISATION_o;
+    auto join_ORGANISATION_o = make_uniq<PhysicalSIPJoin>(join_ORGANISATION_o_op, move(scan_ORGANISATION_o),
+                                                          move(join_WORKAT_pc),
+                                                          move(cond_ORGANISATION_o), JoinType::INNER,
+                                                          left_projection_map,
+                                                          right_projection_map_ORGANISATION_o,
+                                                          delim_types_ORGANISATION_o, 0);
+
+    string p_place_name = paras->data()[1]; // 933;
+    Value p_place = Value(p_place_name);
+    vector<idx_t> PLACE_pl_ids{1, COLUMN_IDENTIFIER_ROW_ID};
+    vector<LogicalType> get_PLACE_pl_types{LogicalType::VARCHAR, LogicalType::BIGINT};
+    string alias_PLACE_pl = "pl";
+    vector<LogicalType> table_types_PLACE_pl;
+    vector<unique_ptr<Expression>> filter_PLACE_pl;
+    unique_ptr<LogicalGet> get_op_PLACE_pl = move(
+            getLogicalGet(*this, table_PLACE, alias_PLACE_pl, table_index_PLACE_pl, table_types_PLACE_pl));
+    unique_ptr<TableFilterSet> table_filters_PLACE_pl = make_uniq<TableFilterSet>();
+    unique_ptr<ConstantFilter> constant_filter_PLACE = duckdb::make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL,
+                                                                                         p_place);
+    table_filters_PLACE_pl->filters[0] = move(constant_filter_PLACE);
+    unique_ptr<PhysicalTableScan> scan_PLACE_pl = make_uniq<PhysicalTableScan>(get_PLACE_pl_types,
+                                                                               get_op_PLACE_pl->function,
+                                                                               get_op_PLACE_pl->table_index,
+                                                                               move(get_op_PLACE_pl->bind_data),
+                                                                               table_types_PLACE_pl, PLACE_pl_ids,
+                                                                               move(filter_PLACE_pl),
+                                                                               vector<column_t>(),
+                                                                               get_op_PLACE_pl->names,
+                                                                               std::move(table_filters_PLACE_pl),
+                                                                               get_op_PLACE_pl->estimated_cardinality,
+                                                                               get_op_PLACE_pl->extra_info);
+
+
+    vector<JoinCondition> cond_ISLOCATEDIN_;
+    JoinCondition join_condition_ISLOCATEDIN_;
+    join_condition_ISLOCATEDIN_.left = make_uniq<BoundReferenceExpression>("place_rowid", LogicalType::BIGINT, 1);
+    join_condition_ISLOCATEDIN_.right = make_uniq<BoundReferenceExpression>("o_placeid_rowid", LogicalType::BIGINT, 1);
+    join_condition_ISLOCATEDIN_.comparison = ExpressionType::COMPARE_EQUAL;
+
+    auto rai_info_ISLOCATEDIN_ = make_uniq<RAIInfo>();
+    rai_info_ISLOCATEDIN_->rai = table_ORGANISATION.GetStorage().info->rais[0].get();
+    rai_info_ISLOCATEDIN_->rai_type = RAIType::TARGET_EDGE;
+    rai_info_ISLOCATEDIN_->forward = true;
+    rai_info_ISLOCATEDIN_->vertex = &table_PLACE;
+    rai_info_ISLOCATEDIN_->vertex_id = table_index_PLACE_pl;
+    rai_info_ISLOCATEDIN_->passing_tables[0] = table_index_PLACE_pl;
+    rai_info_ISLOCATEDIN_->left_cardinalities[0] = table_PLACE.GetStorage().info->cardinality;
+    // rai_info_ISLOCATEDIN_->compact_list = &rai_info_ISLOCATEDIN_->rai->alist->compact__list;
+
+    join_condition_ISLOCATEDIN_.rais.push_back(move(rai_info_ISLOCATEDIN_));
+    cond_ISLOCATEDIN_.push_back(move(join_condition_ISLOCATEDIN_));
+
+    LogicalComparisonJoin join_ISLOCATEDIN__op(JoinType::INNER);
+    vector<LogicalType> output_ISLOCATEDIN__types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                  LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                                  LogicalType::VARCHAR};
+    join_ISLOCATEDIN__op.types = output_ISLOCATEDIN__types;
+    vector<idx_t> right_projection_map_ISLOCATEDIN_{0, 3, 4, 5, 6};
+    vector<idx_t> merge_project_map_ISLOCATEDIN_;
+    vector<LogicalType> delim_types_ISLOCATEDIN_;
+    auto join_ISLOCATEDIN_ = make_uniq<PhysicalSIPJoin>(join_ISLOCATEDIN__op, move(scan_PLACE_pl),
+                                                        move(join_ORGANISATION_o), move(cond_ISLOCATEDIN_),
+                                                        JoinType::INNER, left_projection_map,
+                                                        right_projection_map_ISLOCATEDIN_, delim_types_ISLOCATEDIN_, 0);
+
+    vector<LogicalType> filter_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                     LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::VARCHAR,
+                                     LogicalType::VARCHAR};
+    vector<unique_ptr<Expression>> select_list_filter;
+
+    auto workfrom_left = make_uniq<BoundReferenceExpression>("pc_workfrom", LogicalType::INTEGER, 3);
+    auto workfrom_right = make_uniq<BoundConstantExpression>(work_from);
+    auto work_from_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
+                                                               move(workfrom_left),
+                                                               move(workfrom_right));
+
+    select_list_filter.push_back(move(work_from_expr));
+    unique_ptr<PhysicalFilter> filter_work_from = make_uniq<PhysicalFilter>(filter_types, move(select_list_filter), 0);
+    filter_work_from->children.push_back(move(join_ISLOCATEDIN_));
+
+    vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                     LogicalType::VARCHAR, LogicalType::INTEGER};
+    vector<unique_ptr<Expression>> select_list;
+    auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 4);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 5);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("p_lastname", LogicalType::VARCHAR, 6);
+    auto result_col3 = make_uniq<BoundReferenceExpression>("o_name", LogicalType::VARCHAR, 2);
+    auto result_col4 = make_uniq<BoundReferenceExpression>("pc_workfrom", LogicalType::INTEGER, 3);
+    select_list.push_back(move(result_col0));
+    select_list.push_back(move(result_col1));
+    select_list.push_back(move(result_col2));
+    select_list.push_back(move(result_col3));
+    select_list.push_back(move(result_col4));
+    auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
+    projection->children.push_back(move(filter_work_from));
 
     return projection;
 }

@@ -238,6 +238,14 @@ public:
 
     unique_ptr<PhysicalOperator> GenerateIC121PlanGLogue();
 
+    unique_ptr<PhysicalOperator> GenerateIC21PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC61PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC62PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC91PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC92PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC111PlanPPFilter();
+    unique_ptr<PhysicalOperator> GenerateIC112PlanPPFilter();
+
 // job query
     unique_ptr<PhysicalOperator> GenerateJOB1aPlan(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB1aPlanSIP(ClientContext& context);
