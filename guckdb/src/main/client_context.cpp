@@ -7949,7 +7949,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC91PlanGLogue() {
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
     auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0); // change after e2e experiments, from 1 to 0
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
@@ -8172,7 +8172,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC92PlanGLogue() {
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
     auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
@@ -10171,12 +10171,11 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC91PlanPPFilter() {
                                                             right_projection_map_HASCREATOR_,
                                                             delim_types_HASCREATOR_, 0);
 
-
     vector<LogicalType> filter_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
                                      LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list_filter;
 
-    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0);
     auto comment_date_right = make_uniq<BoundConstantExpression>(comment_date);
     auto comment_create_date_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
                                                                          move(creationDate_left),
@@ -10191,7 +10190,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC91PlanPPFilter() {
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
     auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
@@ -10411,7 +10410,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC92PlanPPFilter() {
                                      LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list_filter;
 
-    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto creationDate_left = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0);
     auto comment_date_right = make_uniq<BoundConstantExpression>(comment_date);
     auto comment_create_date_expr = make_uniq<BoundComparisonExpression>(ExpressionType::COMPARE_LESSTHAN,
                                                                          move(creationDate_left),
@@ -10425,7 +10424,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateIC92PlanPPFilter() {
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_firstname", LogicalType::VARCHAR, 3);
     auto result_col1 = make_uniq<BoundReferenceExpression>("p_secondname", LogicalType::VARCHAR, 4);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 1);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("m_creationdate", LogicalType::BIGINT, 0);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
