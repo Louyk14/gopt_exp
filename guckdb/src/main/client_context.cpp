@@ -16703,7 +16703,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB7aPlan(duckdb::ClientCont
     select_list.push_back(move(result_col1));
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
     projection->children.push_back(move(join_movie_link_));
-    return projection;
+    
     // aggregate
     string agg_name = "min";
     string agg_error = "";
@@ -17233,7 +17233,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB7aPlanHash(duckdb::Client
     select_list.push_back(move(result_col1));
     auto projection = make_uniq<PhysicalProjection>(result_types, move(select_list), 0);
     projection->children.push_back(move(join_movie_link_));
-    return projection;
+
     // aggregate
     string agg_name = "min";
     string agg_error = "";
