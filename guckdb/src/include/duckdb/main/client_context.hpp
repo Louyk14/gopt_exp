@@ -334,6 +334,9 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB3aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB4aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB5aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB6aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB7aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB8aPlanHash(ClientContext& context);
 
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
