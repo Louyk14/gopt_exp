@@ -238,6 +238,7 @@ public:
 
     unique_ptr<PhysicalOperator> GenerateIC121PlanGLogue();
 
+// filter push down
     unique_ptr<PhysicalOperator> GenerateIC21PlanPPFilter();
     unique_ptr<PhysicalOperator> GenerateIC61PlanPPFilter();
     unique_ptr<PhysicalOperator> GenerateIC62PlanPPFilter();
@@ -326,6 +327,13 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB32aPlanNewDirect(ClientContext& context);
 
     unique_ptr<PhysicalOperator> GenerateJOB33aPlan(ClientContext& context);
+
+// back to hash join
+    unique_ptr<PhysicalOperator> GenerateJOB1aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB2aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB3aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB4aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB5aPlanHash(ClientContext& context);
 
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
