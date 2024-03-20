@@ -335,6 +335,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateJOB4aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB5aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB6aPlanHash(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateJOB6aPlanHashPure(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB7aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB8aPlanHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateJOB9aPlanHash(ClientContext& context);
