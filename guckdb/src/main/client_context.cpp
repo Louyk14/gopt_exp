@@ -21160,24 +21160,24 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB10aPlanHash(duckdb::Clien
 
     vector<JoinCondition> cond_company_name_cn;
     JoinCondition join_condition_company_name_cn;
-    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
+    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT,
                                                                               0);
-    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT, 0);
+    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT, 0);
     join_condition_company_name_cn.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_company_name_cn.push_back(move(join_condition_company_name_cn));
 
     LogicalComparisonJoin join_company_name_cn_op(JoinType::INNER);
-    vector<LogicalType> output_company_name_cn_types{LogicalType::BIGINT, LogicalType::VARCHAR,
+    vector<LogicalType> output_company_name_cn_types{LogicalType::BIGINT, LogicalType::BIGINT,
                                                      LogicalType::BIGINT, LogicalType::VARCHAR,
-                                                     LogicalType::BIGINT};
+                                                     LogicalType::BIGINT, LogicalType::VARCHAR};
     join_company_name_cn_op.types = output_company_name_cn_types;
-    vector<idx_t> right_projection_map_company_name_cn{2, 3, 4};
+    vector<idx_t> right_projection_map_company_name_cn{1};
     vector<idx_t> merge_project_map_company_name_cn;
     vector<LogicalType> delim_types_company_name_cn;
     PerfectHashJoinStats joinstate_company_name_cn;
-    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(scan_company_name_cn),
-                                                                move(join_movie_companies_left),
+    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(join_movie_companies_left),
+                                                                move(scan_company_name_cn),
                                                                 move(cond_company_name_cn), JoinType::INNER,
                                                                 left_projection_map,
                                                                 right_projection_map_company_name_cn,
