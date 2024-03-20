@@ -16184,23 +16184,24 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB6aPlanHash(duckdb::Client
     unique_ptr<PhysicalFilter> filter_like = make_uniq<PhysicalFilter>(filter_mc_types, move(select_list_name), 0);
     filter_like->children.push_back(move(scan_name_n));
 
+
     vector<JoinCondition> cond_name_n;
     JoinCondition join_condition_name_n;
-    join_condition_name_n.left = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 1);
-    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
+    join_condition_name_n.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
+    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 1);
     join_condition_name_n.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_name_n.push_back(move(join_condition_name_n));
 
     LogicalComparisonJoin join_name_n_op(JoinType::INNER);
-    vector<LogicalType> output_name_n_types{LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::VARCHAR,
+    vector<LogicalType> output_name_n_types{LogicalType::BIGINT, LogicalType::VARCHAR,
                                             LogicalType::VARCHAR, LogicalType::VARCHAR};
     join_name_n_op.types = output_name_n_types;
-    vector<idx_t> right_projection_map_name_n{1};
+    vector<idx_t> right_projection_map_name_n{2, 3};
     vector<idx_t> merge_project_map_name_n;
     vector<LogicalType> delim_types_name_n;
     PerfectHashJoinStats joinstate_name_n;
-    auto join_name_n = make_uniq<PhysicalHashJoin>(join_name_n_op, move(join_cast_info_), move(filter_like),
+    auto join_name_n = make_uniq<PhysicalHashJoin>(join_name_n_op, move(filter_like), move(join_cast_info_),
                                                        move(cond_name_n), JoinType::INNER,
                                                        left_projection_map, right_projection_map_name_n,
                                                        delim_types_name_n,
@@ -16209,9 +16210,9 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB6aPlanHash(duckdb::Client
 
     vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list;
-    auto result_col0 = make_uniq<BoundReferenceExpression>("keyword", LogicalType::VARCHAR, 2);
-    auto result_col1 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 4);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 3);
+    auto result_col0 = make_uniq<BoundReferenceExpression>("keyword", LogicalType::VARCHAR, 3);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 2);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
@@ -18996,7 +18997,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
                                                             right_projection_map_movie_companies_,
                                                             delim_types_movie_companies_, 0,
                                                             joinstate_movie_companies);
-    
+
     vector<idx_t> name_n1_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
     vector<LogicalType> get_name_n1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
     string alias_name_n1 = "n1";
@@ -19076,7 +19077,6 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
                                                    move(cond_name_n1), JoinType::INNER,
                                                    left_projection_map, right_projection_map_name_n1,
                                                    delim_types_name_n1, 0, joinstate_name_n1);
-
 
     vector<idx_t> aka_name_an1_ids{8, 2};
     vector<LogicalType> get_aka_name_an1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
