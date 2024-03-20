@@ -18996,8 +18996,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
                                                             right_projection_map_movie_companies_,
                                                             delim_types_movie_companies_, 0,
                                                             joinstate_movie_companies);
-
-
+    
     vector<idx_t> name_n1_ids{COLUMN_IDENTIFIER_ROW_ID, 1};
     vector<LogicalType> get_name_n1_types{LogicalType::BIGINT, LogicalType::VARCHAR};
     string alias_name_n1 = "n1";
@@ -19105,23 +19104,23 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
 
     vector<JoinCondition> cond_aka_name_to_name_;
     JoinCondition join_condition_aka_name_to_name_;
-    join_condition_aka_name_to_name_.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT,
+    join_condition_aka_name_to_name_.left = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT,
                                                                                 0);
-    join_condition_aka_name_to_name_.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 0);
+    join_condition_aka_name_to_name_.right = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
     join_condition_aka_name_to_name_.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_aka_name_to_name_.push_back(move(join_condition_aka_name_to_name_));
 
     LogicalComparisonJoin join_aka_name_to_name__op(JoinType::INNER);
-    vector<LogicalType> output_aka_name_to_name__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+    vector<LogicalType> output_aka_name_to_name__types{LogicalType::BIGINT, LogicalType::VARCHAR,
                                                        LogicalType::VARCHAR};
     join_aka_name_to_name__op.types = output_aka_name_to_name__types;
-    vector<idx_t> right_projection_map_aka_name_to_name_{1};
+    vector<idx_t> right_projection_map_aka_name_to_name_{2};
     vector<idx_t> merge_project_map_aka_name_to_name_;
     vector<LogicalType> delim_types_aka_name_to_name_;
     PerfectHashJoinStats joinstate_aka_name_to_name_;
-    auto join_aka_name_to_name_ = make_uniq<PhysicalHashJoin>(join_aka_name_to_name__op, move(join_name_n1),
-                                                             move(scan_aka_name_an1),
+    auto join_aka_name_to_name_ = make_uniq<PhysicalHashJoin>(join_aka_name_to_name__op, move(scan_aka_name_an1),
+                                                             move(join_name_n1),
                                                              move(cond_aka_name_to_name_), JoinType::INNER,
                                                              left_projection_map,
                                                              right_projection_map_aka_name_to_name_,
@@ -19130,7 +19129,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
 
     vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list;
-    auto result_col0 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 3);
+    auto result_col0 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
     auto result_col1 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 2);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
