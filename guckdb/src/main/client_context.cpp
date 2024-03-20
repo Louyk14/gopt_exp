@@ -18972,25 +18972,25 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
 
     vector<JoinCondition> cond_movie_companies_;
     JoinCondition join_condition_movie_companies_;
-    join_condition_movie_companies_.left = make_uniq<BoundReferenceExpression>("company_id_rowid",
+    join_condition_movie_companies_.left = make_uniq<BoundReferenceExpression>("company_name_rowid",
                                                                                LogicalType::BIGINT,
-                                                                               1);
-    join_condition_movie_companies_.right = make_uniq<BoundReferenceExpression>("company_name_rowid",
-                                                                                LogicalType::BIGINT, 0);
+                                                                               0);
+    join_condition_movie_companies_.right = make_uniq<BoundReferenceExpression>("company_id_rowid",
+                                                                                LogicalType::BIGINT, 1);
     join_condition_movie_companies_.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_movie_companies_.push_back(move(join_condition_movie_companies_));
 
     LogicalComparisonJoin join_movie_companies__op(JoinType::INNER);
-    vector<LogicalType> output_movie_companies__types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
-                                                      LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT};
+    vector<LogicalType> output_movie_companies__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                                      LogicalType::BIGINT};
     join_movie_companies__op.types = output_movie_companies__types;
-    vector<idx_t> right_projection_map_movie_companies_{0};
+    vector<idx_t> right_projection_map_movie_companies_{3, 4};
     vector<idx_t> merge_project_map_movie_companies_;
     vector<LogicalType> delim_types_movie_companies_;
     PerfectHashJoinStats joinstate_movie_companies;
-    auto join_movie_companies_ = make_uniq<PhysicalHashJoin>(join_movie_companies__op, move(join_role_type_rt),
-                                                            move(scan_company_name_cn),
+    auto join_movie_companies_ = make_uniq<PhysicalHashJoin>(join_movie_companies__op, move(scan_company_name_cn),
+                                                            move(join_role_type_rt),
                                                             move(cond_movie_companies_), JoinType::INNER,
                                                             left_projection_map,
                                                             right_projection_map_movie_companies_,
@@ -19060,7 +19060,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
     vector<JoinCondition> cond_name_n1;
     JoinCondition join_condition_name_n1;
     join_condition_name_n1.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
-    join_condition_name_n1.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 4);
+    join_condition_name_n1.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 3);
     join_condition_name_n1.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_name_n1.push_back(move(join_condition_name_n1));
@@ -19068,7 +19068,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB8aPlanHash(duckdb::Client
     LogicalComparisonJoin join_name_n1_op(JoinType::INNER);
     vector<LogicalType> output_name_n1_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR};
     join_name_n1_op.types = output_name_n1_types;
-    vector<idx_t> right_projection_map_name_n1{3};
+    vector<idx_t> right_projection_map_name_n1{2};
     vector<idx_t> merge_project_map_name_n1;
     vector<LogicalType> delim_types_name_n1;
     PerfectHashJoinStats joinstate_name_n1;
@@ -20197,24 +20197,25 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
 
     vector<JoinCondition> cond_company_name_cn;
     JoinCondition join_condition_company_name_cn;
-    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
-                                                                              0);
-    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT,
-                                                                               1);
+    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT,
+                                                                              1);
+    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
+                                                                               0);
     join_condition_company_name_cn.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_company_name_cn.push_back(move(join_condition_company_name_cn));
 
     LogicalComparisonJoin join_company_name_cn_op(JoinType::INNER);
-    vector<LogicalType> output_company_name_cn_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
-                                                     LogicalType::BIGINT, LogicalType::BIGINT};
+    vector<LogicalType> output_company_name_cn_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                     LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
+                                                     LogicalType::BIGINT};
     join_company_name_cn_op.types = output_company_name_cn_types;
-    vector<idx_t> right_projection_map_company_name_cn{3, 4, 5};
+    vector<idx_t> right_projection_map_company_name_cn{0};
     vector<idx_t> merge_project_map_company_name_cn;
     vector<LogicalType> delim_types_company_name_cn;
     PerfectHashJoinStats joinstate_company_name_cn;
-    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(scan_company_name_cn),
-                                                           move(join_movie_companies_),
+    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(join_movie_companies_),
+                                                           move(scan_company_name_cn),
                                                            move(cond_company_name_cn), JoinType::INNER,
                                                            left_projection_map,
                                                            right_projection_map_company_name_cn,
@@ -20268,7 +20269,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     vector<JoinCondition> cond_name_n;
     JoinCondition join_condition_name_n;
     join_condition_name_n.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
-    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 3);
+    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 4);
     join_condition_name_n.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_name_n.push_back(move(join_condition_name_n));
@@ -20277,7 +20278,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     vector<LogicalType> output_name_n_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
                                             LogicalType::VARCHAR, LogicalType::BIGINT};
     join_name_n_op.types = output_name_n_types;
-    vector<idx_t> right_projection_map_name_n{2, 4};
+    vector<idx_t> right_projection_map_name_n{3, 5};
     vector<idx_t> merge_project_map_name_n;
     vector<LogicalType> delim_types_name_n;
     PerfectHashJoinStats joinstate_name_n;
