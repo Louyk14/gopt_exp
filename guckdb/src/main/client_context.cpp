@@ -20197,25 +20197,24 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
 
     vector<JoinCondition> cond_company_name_cn;
     JoinCondition join_condition_company_name_cn;
-    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT,
-                                                                              1);
-    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
-                                                                               0);
+    join_condition_company_name_cn.left = make_uniq<BoundReferenceExpression>("company_name_rowid", LogicalType::BIGINT,
+                                                                              0);
+    join_condition_company_name_cn.right = make_uniq<BoundReferenceExpression>("company_id_rowid", LogicalType::BIGINT,
+                                                                               1);
     join_condition_company_name_cn.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_company_name_cn.push_back(move(join_condition_company_name_cn));
 
     LogicalComparisonJoin join_company_name_cn_op(JoinType::INNER);
-    vector<LogicalType> output_company_name_cn_types{LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
-                                                     LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT,
-                                                     LogicalType::BIGINT};
+    vector<LogicalType> output_company_name_cn_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                                     LogicalType::BIGINT, LogicalType::BIGINT};
     join_company_name_cn_op.types = output_company_name_cn_types;
-    vector<idx_t> right_projection_map_company_name_cn{0};
+    vector<idx_t> right_projection_map_company_name_cn{3, 4, 5};
     vector<idx_t> merge_project_map_company_name_cn;
     vector<LogicalType> delim_types_company_name_cn;
     PerfectHashJoinStats joinstate_company_name_cn;
-    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(join_movie_companies_),
-                                                           move(scan_company_name_cn),
+    auto join_company_name_cn = make_uniq<PhysicalHashJoin>(join_company_name_cn_op, move(scan_company_name_cn),
+                                                           move(join_movie_companies_),
                                                            move(cond_company_name_cn), JoinType::INNER,
                                                            left_projection_map,
                                                            right_projection_map_company_name_cn,
@@ -20269,7 +20268,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     vector<JoinCondition> cond_name_n;
     JoinCondition join_condition_name_n;
     join_condition_name_n.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
-    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 4);
+    join_condition_name_n.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 3);
     join_condition_name_n.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_name_n.push_back(move(join_condition_name_n));
@@ -20278,7 +20277,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     vector<LogicalType> output_name_n_types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
                                             LogicalType::VARCHAR, LogicalType::BIGINT};
     join_name_n_op.types = output_name_n_types;
-    vector<idx_t> right_projection_map_name_n{3, 5};
+    vector<idx_t> right_projection_map_name_n{2, 4};
     vector<idx_t> merge_project_map_name_n;
     vector<LogicalType> delim_types_name_n;
     PerfectHashJoinStats joinstate_name_n;
@@ -20312,23 +20311,23 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
 
     vector<JoinCondition> cond_aka_name_to_name_;
     JoinCondition join_condition_aka_name_to_name_;
-    join_condition_aka_name_to_name_.left = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT,
+    join_condition_aka_name_to_name_.left = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT,
                                                                                 0);
-    join_condition_aka_name_to_name_.right = make_uniq<BoundReferenceExpression>("person_id_rowid", LogicalType::BIGINT, 0);
+    join_condition_aka_name_to_name_.right = make_uniq<BoundReferenceExpression>("name_rowid", LogicalType::BIGINT, 0);
     join_condition_aka_name_to_name_.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_aka_name_to_name_.push_back(move(join_condition_aka_name_to_name_));
 
     LogicalComparisonJoin join_aka_name_to_name__op(JoinType::INNER);
     vector<LogicalType> output_aka_name_to_name__types{LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR,
-                                                       LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR};
+                                                       LogicalType::BIGINT};
     join_aka_name_to_name__op.types = output_aka_name_to_name__types;
-    vector<idx_t> right_projection_map_aka_name_to_name_{1};
+    vector<idx_t> right_projection_map_aka_name_to_name_{3, 4};
     vector<idx_t> merge_project_map_aka_name_to_name_;
     vector<LogicalType> delim_types_aka_name_to_name_;
     PerfectHashJoinStats joinstate_aka_name_to_name;
-    auto join_aka_name_to_name_ = make_uniq<PhysicalHashJoin>(join_aka_name_to_name__op, move(join_name_n),
-                                                             move(scan_aka_name_an),
+    auto join_aka_name_to_name_ = make_uniq<PhysicalHashJoin>(join_aka_name_to_name__op, move(scan_aka_name_an),
+                                                             move(join_name_n),
                                                              move(cond_aka_name_to_name_), JoinType::INNER,
                                                              left_projection_map,
                                                              right_projection_map_aka_name_to_name_,
@@ -20364,7 +20363,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     JoinCondition join_condition_char_name_chn;
     join_condition_char_name_chn.left = make_uniq<BoundReferenceExpression>("char_name_rowid", LogicalType::BIGINT, 0);
     join_condition_char_name_chn.right = make_uniq<BoundReferenceExpression>("person_role_id_rowid",
-                                                                             LogicalType::BIGINT, 4);
+                                                                             LogicalType::BIGINT, 3);
     join_condition_char_name_chn.comparison = ExpressionType::COMPARE_EQUAL;
 
     cond_char_name_chn.push_back(move(join_condition_char_name_chn));
@@ -20373,7 +20372,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
     vector<LogicalType> output_multi_at_char_name_chn_types{LogicalType::BIGINT, LogicalType::VARCHAR,
                                                             LogicalType::VARCHAR, LogicalType::VARCHAR};
     join_multi_at_char_name_chn_op.types = output_multi_at_char_name_chn_types;
-    vector<idx_t> right_projection_map_multi_at_char_name_chn{3, 5};
+    vector<idx_t> right_projection_map_multi_at_char_name_chn{1, 2};
     vector<LogicalType> delim_types_multi_at_char_name_chn;
     PerfectHashJoinStats joinstate_multi_at_char_name_chn;
     auto join_multi_at_char_name_chn = make_uniq<PhysicalHashJoin>(join_multi_at_char_name_chn_op,
@@ -20388,9 +20387,9 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateJOB9aPlanHash(duckdb::Client
 
     vector<LogicalType> result_types{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
     vector<unique_ptr<Expression>> select_list;
-    auto result_col0 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 3);
+    auto result_col0 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 2);
     auto result_col1 = make_uniq<BoundReferenceExpression>("name", LogicalType::VARCHAR, 1);
-    auto result_col2 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 2);
+    auto result_col2 = make_uniq<BoundReferenceExpression>("title", LogicalType::VARCHAR, 3);
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
     select_list.push_back(move(result_col2));
