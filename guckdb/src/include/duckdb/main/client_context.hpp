@@ -351,6 +351,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateButterflyWOEIHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyPara(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyWOEIPara(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateButterflyMODWOEI(ClientContext& context);
 // clique query (person - person - person - person)
     unique_ptr<PhysicalOperator> GenerateClique(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateCliqueWOEI(ClientContext& context);
