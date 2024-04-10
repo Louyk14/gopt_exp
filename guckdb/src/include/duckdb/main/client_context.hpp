@@ -202,16 +202,20 @@ public:
 // ic query
     unique_ptr<PhysicalOperator> GenerateIC11Plan();
     unique_ptr<PhysicalOperator> GenerateIC11PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC11PlanCalcite();
     unique_ptr<PhysicalOperator> GenerateIC12Plan();
     unique_ptr<PhysicalOperator> GenerateIC12PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC13PlanGLogue();
 
     unique_ptr<PhysicalOperator> GenerateIC21PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC21PlanCalcite();
 
     unique_ptr<PhysicalOperator> GenerateIC31PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC31PlanCalcite();
     unique_ptr<PhysicalOperator> GenerateIC32PlanGLogue();
 
     unique_ptr<PhysicalOperator> GenerateIC41PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC41PlanCalcite();
 
     unique_ptr<PhysicalOperator> GenerateIC51PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC51PlanGLogueEI();
