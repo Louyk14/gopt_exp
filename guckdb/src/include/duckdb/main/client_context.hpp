@@ -206,6 +206,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateIC12Plan();
     unique_ptr<PhysicalOperator> GenerateIC12PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC13PlanGLogue();
+    unique_ptr<PhysicalOperator> GenerateIC13PlanCalcite();
 
     unique_ptr<PhysicalOperator> GenerateIC21PlanGLogue();
     unique_ptr<PhysicalOperator> GenerateIC21PlanCalcite();
