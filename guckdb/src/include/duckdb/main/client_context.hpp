@@ -348,6 +348,8 @@ public:
 // triangle query (person - forum - post)
     unique_ptr<PhysicalOperator> GenerateTriangle(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateTriangleWOEI(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateTriangleWOPara(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateTriangleWOParaWOEI(ClientContext& context);
 // butterfly query (person - person - forum - post)
     unique_ptr<PhysicalOperator> GenerateButterfly(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyWOEI(ClientContext& context);
@@ -355,6 +357,7 @@ public:
     unique_ptr<PhysicalOperator> GenerateButterflyWOEIHash(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyPara(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyWOEIPara(ClientContext& context);
+    unique_ptr<PhysicalOperator> GenerateButterflyMOD(ClientContext& context);
     unique_ptr<PhysicalOperator> GenerateButterflyMODWOEI(ClientContext& context);
 // clique query (person - person - person - person)
     unique_ptr<PhysicalOperator> GenerateClique(ClientContext& context);
