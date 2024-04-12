@@ -14190,7 +14190,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateCase4PlanPPFilter() {
     vector<LogicalType> result_types{LogicalType::BIGINT, LogicalType::BIGINT};
     vector<unique_ptr<Expression>> select_list;
     auto result_col0 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 3);
-    auto result_col1 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::VARCHAR, 1);
+    auto result_col1 = make_uniq<BoundReferenceExpression>("p_personid", LogicalType::BIGINT, 1);
 
     select_list.push_back(move(result_col0));
     select_list.push_back(move(result_col1));
