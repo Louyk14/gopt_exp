@@ -379,8 +379,12 @@ public:
 // path query person-knows-person
 // with merge
     unique_ptr<PhysicalOperator> GeneratePathMergeSIP(ClientContext& context);
+    unique_ptr<PhysicalOperator> GeneratePathMergeCase1(ClientContext& context);
+    unique_ptr<PhysicalOperator> GeneratePathMergeCase2(ClientContext& context);
 // with sip only
     unique_ptr<PhysicalOperator> GeneratePathSIP(ClientContext& context);
+    unique_ptr<PhysicalOperator> GeneratePathSIPCase1(ClientContext& context);
+    unique_ptr<PhysicalOperator> GeneratePathSIPCase2(ClientContext& context);
 
 private:
 	//! Parse statements and resolve pragmas from a query
