@@ -13058,7 +13058,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateCase2() {
                                                       delim_types_knows, 0);
 
     idx_t p_comment_length = atoll(paras->data()[2].c_str());
-    Value p_comment = Value::BIGINT(p_comment_length);
+    Value p_comment = Value::INTEGER(p_comment_length);
     vector<idx_t> comment_ids{5, COLUMN_IDENTIFIER_ROW_ID};
     vector<LogicalType> get_comment_types{LogicalType::INTEGER, LogicalType::BIGINT};
     string alias_comment = "c";
@@ -13236,7 +13236,7 @@ unique_ptr<PhysicalOperator> ClientContext::GenerateCase2PlanPPFilter() {
                                                       delim_types_knows, 0);
 
     idx_t p_comment_length = atoll(paras->data()[2].c_str());
-    Value p_comment = Value::BIGINT(p_comment_length);
+    Value p_comment = Value::INTEGER(p_comment_length);
     vector<idx_t> comment_ids{5, COLUMN_IDENTIFIER_ROW_ID};
     vector<LogicalType> get_comment_types{LogicalType::INTEGER, LogicalType::BIGINT};
     string alias_comment = "c";
